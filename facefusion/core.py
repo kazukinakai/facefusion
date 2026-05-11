@@ -235,6 +235,16 @@ def route_job_manager(args : Args) -> ErrorCode:
 			return 0
 		logger.error(translator.get('job_step_not_removed').format(job_id = state_manager.get_item('job_id'), step_index = state_manager.get_item('step_index')), __name__)
 		return 1
+
+	if state_manager.get_item('command') == 'job-optimize':
+		frame_total = args.get('frame_total')
+		job_id = state_manager.get_item('job_id')
+		if job_manager.optimize_job(job_id, frame_total):
+			step_total = job_manager.count_step_total(job_id)
+			logger.info(translator.get('job_optimized').format(job_id = job_id, step_total = step_total), __name__)
+			return 0
+		logger.error(translator.get('job_not_optimized').format(job_id = job_id), __name__)
+		return 1
 	return 1
 
 

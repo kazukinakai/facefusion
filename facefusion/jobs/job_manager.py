@@ -204,6 +204,57 @@ def set_steps_status(job_id : str, step_status : JobStepStatus) -> bool:
 	return False
 
 
+def set_failed_steps_status(job_id : str, step_status : JobStepStatus) -> bool:
+	job = read_job_file(job_id)
+
+	if job:
+		for step in job.get('steps'):
+			if step.get('status') != 'completed':
+				step['status'] = step_status
+		return update_job_file(job_id, job)
+	return False
+
+
+def optimize_job(job_id : str, frame_total : int) -> bool:
+	from copy import copy as _copy
+	from math import ceil
+	from facefusion.vision import count_video_frame_total
+
+	drafted_job_ids = find_job_ids('drafted')
+	queued_job_ids = find_job_ids('queued')
+
+	if job_id not in drafted_job_ids and job_id not in queued_job_ids:
+		return False
+
+	job = read_job_file(job_id)
+	if not job:
+		return False
+
+	new_steps = []
+	for step in job.get('steps'):
+		args = step.get('args')
+		target_path = args.get('target_path')
+
+		if not target_path:
+			new_steps.append(step)
+			continue
+
+		total_frames = count_video_frame_total(target_path)
+		if not total_frames or total_frames <= frame_total:
+			new_steps.append(step)
+			continue
+
+		chunk_count = ceil(total_frames / frame_total)
+		for i in range(chunk_count):
+			chunk_args = _copy(args)
+			chunk_args['trim_frame_start'] = i * frame_total
+			chunk_args['trim_frame_end'] = min((i + 1) * frame_total, total_frames)
+			new_steps.append({'args': chunk_args, 'status': 'drafted'})
+
+	job['steps'] = new_steps
+	return update_job_file(job_id, job)
+
+
 def read_job_file(job_id : str) -> Optional[Job]:
 	job_path = find_job_path(job_id)
 	return read_json(job_path) #type:ignore[return-value]
