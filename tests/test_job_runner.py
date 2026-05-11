@@ -312,6 +312,26 @@ def test_optimize_job() -> None:
 	assert steps[1].get('args').get('trim_frame_start') == 50
 
 
+def test_optimize_job_queued_step_status() -> None:
+	args =\
+	{
+		'source_path': get_test_example_file('source.jpg'),
+		'target_path': get_test_example_file('target-240p.mp4'),
+		'output_path': get_test_output_file('output-queued-status.mp4')
+	}
+
+	create_job('job-test-optimize-queued')
+	add_step('job-test-optimize-queued', args)
+	submit_job('job-test-optimize-queued')
+
+	assert optimize_job('job-test-optimize-queued', 50) is True
+
+	steps = get_steps('job-test-optimize-queued')
+	assert len(steps) >= 2
+	for step in steps:
+		assert step.get('status') == 'queued'
+
+
 def test_optimize_job_respects_trim() -> None:
 	args =\
 	{

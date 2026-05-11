@@ -406,10 +406,14 @@ def test_optimize_job() -> None:
 	}
 
 	assert optimize_job('job-invalid', 100) is False
+	assert optimize_job('job-invalid', 0) is False
+	assert optimize_job('job-invalid', -1) is False
 
 	create_job('job-test-optimize-job')
 	add_step('job-test-optimize-job', args_1)
 
+	assert optimize_job('job-test-optimize-job', 0) is False
+	assert optimize_job('job-test-optimize-job', -1) is False
 	assert optimize_job('job-test-optimize-job', 100) is True
 	assert count_step_total('job-test-optimize-job') == 1
 

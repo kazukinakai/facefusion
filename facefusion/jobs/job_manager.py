@@ -220,12 +220,16 @@ def optimize_job(job_id : str, frame_total : int) -> bool:
 	from math import ceil
 	from facefusion.vision import count_video_frame_total
 
+	if not frame_total or frame_total <= 0:
+		return False
+
 	drafted_job_ids = find_job_ids('drafted')
 	queued_job_ids = find_job_ids('queued')
 
 	if job_id not in drafted_job_ids and job_id not in queued_job_ids:
 		return False
 
+	is_queued = job_id in queued_job_ids
 	job = read_job_file(job_id)
 	if not job:
 		return False
@@ -245,19 +249,20 @@ def optimize_job(job_id : str, frame_total : int) -> bool:
 			continue
 
 		original_start = args.get('trim_frame_start') or 0
-		original_end = args.get('trim_frame_end') or total_frames
+		original_end = min(args.get('trim_frame_end') or total_frames, total_frames)
 		range_frames = original_end - original_start
 
 		if range_frames <= frame_total:
 			new_steps.append(step)
 			continue
 
+		chunk_status = 'queued' if is_queued else 'drafted'
 		chunk_count = ceil(range_frames / frame_total)
 		for i in range(chunk_count):
 			chunk_args = _copy(args)
 			chunk_args['trim_frame_start'] = original_start + i * frame_total
 			chunk_args['trim_frame_end'] = min(original_start + (i + 1) * frame_total, original_end)
-			new_steps.append({'args': chunk_args, 'status': 'drafted'})
+			new_steps.append({'args': chunk_args, 'status': chunk_status})
 
 	job['steps'] = new_steps
 	return update_job_file(job_id, job)
