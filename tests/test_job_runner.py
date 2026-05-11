@@ -312,6 +312,29 @@ def test_optimize_job() -> None:
 	assert steps[1].get('args').get('trim_frame_start') == 50
 
 
+def test_optimize_job_respects_trim() -> None:
+	args =\
+	{
+		'source_path': get_test_example_file('source.jpg'),
+		'target_path': get_test_example_file('target-240p.mp4'),
+		'output_path': get_test_output_file('output-trimmed.mp4'),
+		'trim_frame_start': 10,
+		'trim_frame_end': 110
+	}
+
+	create_job('job-test-optimize-trim')
+	add_step('job-test-optimize-trim', args)
+
+	assert optimize_job('job-test-optimize-trim', 50) is True
+
+	steps = get_steps('job-test-optimize-trim')
+	assert len(steps) == 2
+	assert steps[0].get('args').get('trim_frame_start') == 10
+	assert steps[0].get('args').get('trim_frame_end') == 60
+	assert steps[1].get('args').get('trim_frame_start') == 60
+	assert steps[1].get('args').get('trim_frame_end') == 110
+
+
 def test_collect_output_set() -> None:
 	args_1 =\
 	{

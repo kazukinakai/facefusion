@@ -240,15 +240,23 @@ def optimize_job(job_id : str, frame_total : int) -> bool:
 			continue
 
 		total_frames = count_video_frame_total(target_path)
-		if not total_frames or total_frames <= frame_total:
+		if not total_frames:
 			new_steps.append(step)
 			continue
 
-		chunk_count = ceil(total_frames / frame_total)
+		original_start = args.get('trim_frame_start') or 0
+		original_end = args.get('trim_frame_end') or total_frames
+		range_frames = original_end - original_start
+
+		if range_frames <= frame_total:
+			new_steps.append(step)
+			continue
+
+		chunk_count = ceil(range_frames / frame_total)
 		for i in range(chunk_count):
 			chunk_args = _copy(args)
-			chunk_args['trim_frame_start'] = i * frame_total
-			chunk_args['trim_frame_end'] = min((i + 1) * frame_total, total_frames)
+			chunk_args['trim_frame_start'] = original_start + i * frame_total
+			chunk_args['trim_frame_end'] = min(original_start + (i + 1) * frame_total, original_end)
 			new_steps.append({'args': chunk_args, 'status': 'drafted'})
 
 	job['steps'] = new_steps
