@@ -8,6 +8,7 @@ from typing import List, Optional
 import onnxruntime
 
 import facefusion.choices
+from facefusion import state_manager
 from facefusion.filesystem import create_directory, is_directory
 from facefusion.types import ExecutionDevice, ExecutionProvider, InferenceOptionSet, InferenceProvider, ValueAndUnit
 
@@ -47,6 +48,8 @@ def create_inference_providers(execution_device_id : int, execution_providers : 
 			{
 				'device_id': execution_device_id
 			}
+			if state_manager.get_item('tensorrt_fp16'):
+				inference_option_set['trt_fp16_enable'] = True
 			if is_directory(cache_path) or create_directory(cache_path):
 				inference_option_set.update(
 				{
