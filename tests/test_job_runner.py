@@ -4,7 +4,8 @@ import pytest
 
 from facefusion.download import conditional_download
 from facefusion.filesystem import copy_file
-from facefusion.jobs.job_manager import add_step, clear_jobs, create_job, init_jobs, move_job_file, submit_job, submit_jobs
+from facefusion.jobs.job_helper import get_step_output_path
+from facefusion.jobs.job_manager import add_step, clear_jobs, create_job, init_jobs, move_job_file, set_step_status, submit_job, submit_jobs
 from facefusion.jobs.job_runner import collect_output_set, finalize_steps, retry_job, retry_jobs, run_job, run_jobs, run_steps
 from facefusion.types import Args
 from .helper import get_test_example_file, get_test_examples_directory, get_test_jobs_directory, get_test_output_file, is_test_output_file, prepare_test_output_directory
@@ -274,3 +275,52 @@ def test_collect_output_set() -> None:
 	}
 
 	assert collect_output_set('job-test-collect-output-set') == output_set
+
+
+def test_run_steps_skip_completed() -> None:
+	args =\
+	{
+		'source_path': get_test_example_file('source.jpg'),
+		'target_path': get_test_example_file('target-240p.jpg'),
+		'output_path': get_test_output_file('output-1.jpg')
+	}
+	processed_indices = []
+
+	def process_step_tracked(job_id : str, step_index : int, step_args : Args) -> bool:
+		processed_indices.append(step_index)
+		return copy_file(step_args.get('target_path'), step_args.get('output_path'))
+
+	create_job('job-test-run-steps-skip-completed')
+	add_step('job-test-run-steps-skip-completed', args)
+	add_step('job-test-run-steps-skip-completed', args)
+	add_step('job-test-run-steps-skip-completed', args)
+	set_step_status('job-test-run-steps-skip-completed', 0, 'completed')
+
+	assert run_steps('job-test-run-steps-skip-completed', process_step_tracked) is True
+	assert processed_indices == [ 1, 2 ]
+
+
+def test_retry_job_resume() -> None:
+	args =\
+	{
+		'source_path': get_test_example_file('source.jpg'),
+		'target_path': get_test_example_file('target-240p.jpg'),
+		'output_path': get_test_output_file('output-1.jpg')
+	}
+	processed_indices = []
+
+	def process_step_tracked(job_id : str, step_index : int, step_args : Args) -> bool:
+		processed_indices.append(step_index)
+		return copy_file(step_args.get('target_path'), step_args.get('output_path'))
+
+	create_job('job-test-retry-job-resume')
+	add_step('job-test-retry-job-resume', args)
+	add_step('job-test-retry-job-resume', args)
+	submit_job('job-test-retry-job-resume')
+	set_step_status('job-test-retry-job-resume', 0, 'completed')
+	copy_file(args.get('target_path'), get_step_output_path('job-test-retry-job-resume', 0, args.get('output_path')))
+	move_job_file('job-test-retry-job-resume', 'failed')
+
+	assert retry_job('job-test-retry-job-resume', process_step_tracked) is True
+	assert processed_indices == [ 1 ]
+	assert is_test_output_file('output-1.jpg') is True

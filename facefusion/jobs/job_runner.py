@@ -11,7 +11,6 @@ def run_job(job_id : str, process_step : ProcessStep) -> bool:
 		if run_steps(job_id, process_step) and finalize_steps(job_id):
 			clean_steps(job_id)
 			return job_manager.move_job_file(job_id, 'completed')
-		clean_steps(job_id)
 		job_manager.move_job_file(job_id, 'failed')
 	return False
 
@@ -34,7 +33,7 @@ def retry_job(job_id : str, process_step : ProcessStep) -> bool:
 	failed_job_ids = job_manager.find_job_ids('failed')
 
 	if job_id in failed_job_ids:
-		return job_manager.set_steps_status(job_id, 'queued') and job_manager.move_job_file(job_id, 'queued') and run_job(job_id, process_step)
+		return job_manager.set_failed_steps_status(job_id, 'queued') and job_manager.move_job_file(job_id, 'queued') and run_job(job_id, process_step)
 	return False
 
 
@@ -69,6 +68,8 @@ def run_steps(job_id : str, process_step : ProcessStep) -> bool:
 
 	if steps:
 		for index, step in enumerate(steps):
+			if step.get('status') == 'completed':
+				continue
 			if not run_step(job_id, index, step, process_step):
 				return False
 		return True

@@ -3,7 +3,7 @@ from time import sleep
 import pytest
 
 from facefusion.jobs.job_helper import get_step_output_path
-from facefusion.jobs.job_manager import add_step, clear_jobs, count_step_total, create_job, delete_job, delete_jobs, find_job_ids, find_jobs, get_steps, init_jobs, insert_step, move_job_file, remix_step, remove_step, set_step_status, set_steps_status, submit_job, submit_jobs
+from facefusion.jobs.job_manager import add_step, clear_jobs, count_step_total, create_job, delete_job, delete_jobs, find_job_ids, find_jobs, get_steps, init_jobs, insert_step, move_job_file, remix_step, remove_step, set_failed_steps_status, set_step_status, set_steps_status, submit_job, submit_jobs
 from .helper import get_test_jobs_directory
 
 
@@ -384,3 +384,33 @@ def test_set_steps_status() -> None:
 	assert steps[0].get('status') == 'queued'
 	assert steps[1].get('status') == 'queued'
 	assert count_step_total('job-test-set-steps-status') == 2
+
+
+def test_set_failed_steps_status() -> None:
+	args_1 =\
+	{
+		'source_path': 'source-1.jpg',
+		'target_path': 'target-1.jpg',
+		'output_path': 'output-1.jpg'
+	}
+	args_2 =\
+	{
+		'source_path': 'source-2.jpg',
+		'target_path': 'target-2.jpg',
+		'output_path': 'output-2.jpg'
+	}
+
+	assert set_failed_steps_status('job-invalid', 'queued') is False
+
+	create_job('job-test-set-failed-steps-status')
+	add_step('job-test-set-failed-steps-status', args_1)
+	add_step('job-test-set-failed-steps-status', args_2)
+	set_step_status('job-test-set-failed-steps-status', 0, 'completed')
+	set_step_status('job-test-set-failed-steps-status', 1, 'failed')
+
+	assert set_failed_steps_status('job-test-set-failed-steps-status', 'queued') is True
+
+	steps = get_steps('job-test-set-failed-steps-status')
+
+	assert steps[0].get('status') == 'completed'
+	assert steps[1].get('status') == 'queued'

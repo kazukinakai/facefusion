@@ -204,6 +204,17 @@ def set_steps_status(job_id : str, step_status : JobStepStatus) -> bool:
 	return False
 
 
+def set_failed_steps_status(job_id : str, step_status : JobStepStatus) -> bool:
+	job = read_job_file(job_id)
+
+	if job:
+		for step in job.get('steps'):
+			if step.get('status') != 'completed':
+				step['status'] = step_status
+		return update_job_file(job_id, job)
+	return False
+
+
 def read_job_file(job_id : str) -> Optional[Job]:
 	job_path = find_job_path(job_id)
 	return read_json(job_path) #type:ignore[return-value]
