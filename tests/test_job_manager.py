@@ -5,7 +5,7 @@ import pytest
 
 from facefusion.download import conditional_download
 from facefusion.jobs.job_helper import get_step_output_path
-from facefusion.jobs.job_manager import add_step, clear_jobs, count_step_total, create_job, delete_job, delete_jobs, find_job_ids, find_jobs, get_steps, init_jobs, insert_step, move_job_file, optimize_job, remix_step, remove_step, set_failed_steps_status, set_step_status, set_steps_status, submit_job, submit_jobs
+from facefusion.jobs.job_manager import add_step, clear_jobs, count_step_total, create_job, delete_job, delete_jobs, find_job_ids, find_jobs, get_steps, init_jobs, insert_step, move_job_file, remix_step, remove_step, set_incomplete_steps_status, set_step_status, set_steps_status, split_job, submit_job, submit_jobs
 from facefusion.vision import count_video_frame_total
 from .helper import get_test_example_file, get_test_examples_directory, get_test_jobs_directory
 
@@ -14,6 +14,7 @@ from .helper import get_test_example_file, get_test_examples_directory, get_test
 def before_all() -> None:
 	conditional_download(get_test_examples_directory(),
 	[
+		'https://github.com/facefusion/facefusion-assets/releases/download/examples-3.0.0/source.jpg',
 		'https://github.com/facefusion/facefusion-assets/releases/download/examples-3.0.0/target-240p.mp4'
 	])
 
@@ -397,7 +398,7 @@ def test_set_steps_status() -> None:
 	assert count_step_total('job-test-set-steps-status') == 2
 
 
-def test_set_failed_steps_status() -> None:
+def test_set_incomplete_steps_status() -> None:
 	args_1 =\
 	{
 		'source_path': 'source-1.jpg',
@@ -410,24 +411,33 @@ def test_set_failed_steps_status() -> None:
 		'target_path': 'target-2.jpg',
 		'output_path': 'output-2.jpg'
 	}
+	args_3 =\
+	{
+		'source_path': 'source-3.jpg',
+		'target_path': 'target-3.jpg',
+		'output_path': 'output-3.jpg'
+	}
 
-	assert set_failed_steps_status('job-invalid', 'queued') is False
+	assert set_incomplete_steps_status('job-invalid', 'queued') is False
 
-	create_job('job-test-set-failed-steps-status')
-	add_step('job-test-set-failed-steps-status', args_1)
-	add_step('job-test-set-failed-steps-status', args_2)
-	set_step_status('job-test-set-failed-steps-status', 0, 'completed')
-	set_step_status('job-test-set-failed-steps-status', 1, 'failed')
+	create_job('job-test-set-incomplete-steps-status')
+	add_step('job-test-set-incomplete-steps-status', args_1)
+	add_step('job-test-set-incomplete-steps-status', args_2)
+	add_step('job-test-set-incomplete-steps-status', args_3)
+	set_step_status('job-test-set-incomplete-steps-status', 0, 'completed')
+	set_step_status('job-test-set-incomplete-steps-status', 1, 'failed')
+	set_step_status('job-test-set-incomplete-steps-status', 2, 'started')
 
-	assert set_failed_steps_status('job-test-set-failed-steps-status', 'queued') is True
+	assert set_incomplete_steps_status('job-test-set-incomplete-steps-status', 'queued') is True
 
-	steps = get_steps('job-test-set-failed-steps-status')
+	steps = get_steps('job-test-set-incomplete-steps-status')
 
 	assert steps[0].get('status') == 'completed'
 	assert steps[1].get('status') == 'queued'
+	assert steps[2].get('status') == 'queued'
 
 
-def test_optimize_job() -> None:
+def test_split_job() -> None:
 	frame_total = count_video_frame_total(get_test_example_file('target-240p.mp4'))
 	step_frame_total = frame_total // 3
 	args =\
@@ -437,13 +447,13 @@ def test_optimize_job() -> None:
 		'output_path': 'output-1.mp4'
 	}
 
-	assert optimize_job('job-invalid', step_frame_total) is False
+	assert split_job('job-invalid', step_frame_total) is False
 
 	create_job('job-test-optimize-job')
 	add_step('job-test-optimize-job', args)
 
-	assert optimize_job('job-test-optimize-job', 0) is False
-	assert optimize_job('job-test-optimize-job', step_frame_total) is True
+	assert split_job('job-test-optimize-job', 0) is False
+	assert split_job('job-test-optimize-job', step_frame_total) is True
 
 	steps = get_steps('job-test-optimize-job')
 
@@ -453,7 +463,7 @@ def test_optimize_job() -> None:
 	assert steps[-1].get('args').get('trim_frame_end') == frame_total
 
 
-def test_optimize_job_respects_trim() -> None:
+def test_split_job_respects_trim() -> None:
 	args =\
 	{
 		'source_path': 'source-1.jpg',
@@ -466,7 +476,7 @@ def test_optimize_job_respects_trim() -> None:
 	create_job('job-test-optimize-job-respects-trim')
 	add_step('job-test-optimize-job-respects-trim', args)
 
-	assert optimize_job('job-test-optimize-job-respects-trim', 60) is True
+	assert split_job('job-test-optimize-job-respects-trim', 60) is True
 
 	steps = get_steps('job-test-optimize-job-respects-trim')
 
@@ -477,7 +487,7 @@ def test_optimize_job_respects_trim() -> None:
 	assert steps[2].get('args').get('trim_frame_end') == 200
 
 
-def test_optimize_job_queued_step_status() -> None:
+def test_split_job_queued_step_status() -> None:
 	frame_total = count_video_frame_total(get_test_example_file('target-240p.mp4'))
 	args =\
 	{
@@ -490,7 +500,7 @@ def test_optimize_job_queued_step_status() -> None:
 	add_step('job-test-optimize-job-queued', args)
 	submit_job('job-test-optimize-job-queued')
 
-	assert optimize_job('job-test-optimize-job-queued', frame_total // 3) is True
+	assert split_job('job-test-optimize-job-queued', frame_total // 3) is True
 
 	steps = get_steps('job-test-optimize-job-queued')
 
@@ -498,3 +508,39 @@ def test_optimize_job_queued_step_status() -> None:
 
 	for step in steps:
 		assert step.get('status') == 'queued'
+
+
+def test_split_job_image_target() -> None:
+	args =\
+	{
+		'source_path': 'source-1.jpg',
+		'target_path': get_test_example_file('source.jpg'),
+		'output_path': 'output-1.jpg'
+	}
+
+	create_job('job-test-split-image-target')
+	add_step('job-test-split-image-target', args)
+
+	assert split_job('job-test-split-image-target', 10) is True
+
+	steps = get_steps('job-test-split-image-target')
+
+	assert len(steps) == 1
+	assert steps[0].get('args').get('trim_frame_start') is None
+
+
+def test_split_job_without_target() -> None:
+	args =\
+	{
+		'source_path': 'source-1.jpg',
+		'output_path': 'output-1.jpg'
+	}
+
+	create_job('job-test-split-without-target')
+	add_step('job-test-split-without-target', args)
+
+	assert split_job('job-test-split-without-target', 10) is True
+
+	steps = get_steps('job-test-split-without-target')
+
+	assert len(steps) == 1

@@ -99,7 +99,7 @@ def create_and_run_job(step_args : Args) -> bool:
 	for key in job_store.get_job_keys():
 		state_manager.sync_item(key) #type:ignore[arg-type]
 
-	return job_manager.create_job(job_id) and job_manager.add_step(job_id, step_args) and job_manager.submit_job(job_id) and (not step_frame_total or job_manager.optimize_job(job_id, step_frame_total)) and job_runner.run_job(job_id, process_step)
+	return job_manager.create_job(job_id) and job_manager.add_step(job_id, step_args) and job_manager.submit_job(job_id) and (not step_frame_total or job_manager.split_job(job_id, step_frame_total)) and job_runner.run_job(job_id, process_step)
 
 
 def resolve_step_frame_total(target_path : str) -> int:
