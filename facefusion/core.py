@@ -55,7 +55,7 @@ def route(args : Args) -> None:
 			hard_exit(2)
 		benchmarker.render()
 
-	if state_manager.get_item('command') in [ 'job-list', 'job-create', 'job-submit', 'job-submit-all', 'job-delete', 'job-delete-all', 'job-add-step', 'job-remix-step', 'job-insert-step', 'job-remove-step' ]:
+	if state_manager.get_item('command') in [ 'job-list', 'job-create', 'job-submit', 'job-submit-all', 'job-delete', 'job-delete-all', 'job-add-step', 'job-remix-step', 'job-insert-step', 'job-remove-step', 'job-optimize' ]:
 		if not job_manager.init_jobs(state_manager.get_item('jobs_path')):
 			hard_exit(1)
 		error_code = route_job_manager(args)
@@ -234,6 +234,13 @@ def route_job_manager(args : Args) -> ErrorCode:
 			logger.info(translator.get('job_step_removed').format(job_id = state_manager.get_item('job_id'), step_index = state_manager.get_item('step_index')), __name__)
 			return 0
 		logger.error(translator.get('job_step_not_removed').format(job_id = state_manager.get_item('job_id'), step_index = state_manager.get_item('step_index')), __name__)
+		return 1
+
+	if state_manager.get_item('command') == 'job-optimize':
+		if job_manager.optimize_job(state_manager.get_item('job_id'), args.get('step_frame_total')):
+			logger.info(translator.get('job_optimized').format(job_id = state_manager.get_item('job_id'), step_total = job_manager.count_step_total(state_manager.get_item('job_id'))), __name__)
+			return 0
+		logger.error(translator.get('job_not_optimized').format(job_id = state_manager.get_item('job_id')), __name__)
 		return 1
 	return 1
 

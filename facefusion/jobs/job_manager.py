@@ -8,6 +8,7 @@ from facefusion.jobs.job_helper import get_step_output_path
 from facefusion.json import read_json, write_json
 from facefusion.time_helper import get_current_date_time
 from facefusion.types import Args, Job, JobSet, JobStatus, JobStep, JobStepStatus
+from facefusion.vision import count_video_frame_total
 
 JOBS_PATH : Optional[str] = None
 
@@ -213,6 +214,54 @@ def set_failed_steps_status(job_id : str, step_status : JobStepStatus) -> bool:
 				step['status'] = step_status
 		return update_job_file(job_id, job)
 	return False
+
+
+def optimize_job(job_id : str, step_frame_total : int) -> bool:
+	if step_frame_total <= 0:
+		return False
+
+	drafted_job_ids = find_job_ids('drafted')
+	queued_job_ids = find_job_ids('queued')
+
+	if job_id not in drafted_job_ids and job_id not in queued_job_ids:
+		return False
+
+	job = read_job_file(job_id)
+
+	if not job:
+		return False
+
+	step_status : JobStepStatus = 'queued' if job_id in queued_job_ids else 'drafted'
+	optimized_steps : List[JobStep] = []
+
+	for step in job.get('steps'):
+		args = step.get('args')
+		target_path = args.get('target_path')
+		frame_total = count_video_frame_total(target_path) if target_path else 0
+
+		if not frame_total:
+			optimized_steps.append(step)
+			continue
+
+		trim_frame_start = args.get('trim_frame_start') or 0
+		trim_frame_end = min(args.get('trim_frame_end') or frame_total, frame_total)
+
+		if trim_frame_end - trim_frame_start <= step_frame_total:
+			optimized_steps.append(step)
+			continue
+
+		for chunk_frame_start in range(trim_frame_start, trim_frame_end, step_frame_total):
+			chunk_args = copy(args)
+			chunk_args['trim_frame_start'] = chunk_frame_start
+			chunk_args['trim_frame_end'] = min(chunk_frame_start + step_frame_total, trim_frame_end)
+			optimized_steps.append(
+			{
+				'args': chunk_args,
+				'status': step_status
+			})
+
+	job['steps'] = optimized_steps
+	return update_job_file(job_id, job)
 
 
 def read_job_file(job_id : str) -> Optional[Job]:

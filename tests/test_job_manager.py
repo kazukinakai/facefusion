@@ -1,10 +1,21 @@
+from math import ceil
 from time import sleep
 
 import pytest
 
+from facefusion.download import conditional_download
 from facefusion.jobs.job_helper import get_step_output_path
-from facefusion.jobs.job_manager import add_step, clear_jobs, count_step_total, create_job, delete_job, delete_jobs, find_job_ids, find_jobs, get_steps, init_jobs, insert_step, move_job_file, remix_step, remove_step, set_failed_steps_status, set_step_status, set_steps_status, submit_job, submit_jobs
-from .helper import get_test_jobs_directory
+from facefusion.jobs.job_manager import add_step, clear_jobs, count_step_total, create_job, delete_job, delete_jobs, find_job_ids, find_jobs, get_steps, init_jobs, insert_step, move_job_file, optimize_job, remix_step, remove_step, set_failed_steps_status, set_step_status, set_steps_status, submit_job, submit_jobs
+from facefusion.vision import count_video_frame_total
+from .helper import get_test_example_file, get_test_examples_directory, get_test_jobs_directory
+
+
+@pytest.fixture(scope = 'module', autouse = True)
+def before_all() -> None:
+	conditional_download(get_test_examples_directory(),
+	[
+		'https://github.com/facefusion/facefusion-assets/releases/download/examples-3.0.0/target-240p.mp4'
+	])
 
 
 @pytest.fixture(scope = 'function', autouse = True)
@@ -414,3 +425,76 @@ def test_set_failed_steps_status() -> None:
 
 	assert steps[0].get('status') == 'completed'
 	assert steps[1].get('status') == 'queued'
+
+
+def test_optimize_job() -> None:
+	frame_total = count_video_frame_total(get_test_example_file('target-240p.mp4'))
+	step_frame_total = frame_total // 3
+	args =\
+	{
+		'source_path': 'source-1.jpg',
+		'target_path': get_test_example_file('target-240p.mp4'),
+		'output_path': 'output-1.mp4'
+	}
+
+	assert optimize_job('job-invalid', step_frame_total) is False
+
+	create_job('job-test-optimize-job')
+	add_step('job-test-optimize-job', args)
+
+	assert optimize_job('job-test-optimize-job', 0) is False
+	assert optimize_job('job-test-optimize-job', step_frame_total) is True
+
+	steps = get_steps('job-test-optimize-job')
+
+	assert len(steps) == ceil(frame_total / step_frame_total)
+	assert steps[0].get('args').get('trim_frame_start') == 0
+	assert steps[0].get('status') == 'drafted'
+	assert steps[-1].get('args').get('trim_frame_end') == frame_total
+
+
+def test_optimize_job_respects_trim() -> None:
+	args =\
+	{
+		'source_path': 'source-1.jpg',
+		'target_path': get_test_example_file('target-240p.mp4'),
+		'output_path': 'output-1.mp4',
+		'trim_frame_start': 50,
+		'trim_frame_end': 200
+	}
+
+	create_job('job-test-optimize-job-respects-trim')
+	add_step('job-test-optimize-job-respects-trim', args)
+
+	assert optimize_job('job-test-optimize-job-respects-trim', 60) is True
+
+	steps = get_steps('job-test-optimize-job-respects-trim')
+
+	assert len(steps) == 3
+	assert steps[0].get('args').get('trim_frame_start') == 50
+	assert steps[0].get('args').get('trim_frame_end') == 110
+	assert steps[1].get('args').get('trim_frame_start') == 110
+	assert steps[2].get('args').get('trim_frame_end') == 200
+
+
+def test_optimize_job_queued_step_status() -> None:
+	frame_total = count_video_frame_total(get_test_example_file('target-240p.mp4'))
+	args =\
+	{
+		'source_path': 'source-1.jpg',
+		'target_path': get_test_example_file('target-240p.mp4'),
+		'output_path': 'output-1.mp4'
+	}
+
+	create_job('job-test-optimize-job-queued')
+	add_step('job-test-optimize-job-queued', args)
+	submit_job('job-test-optimize-job-queued')
+
+	assert optimize_job('job-test-optimize-job-queued', frame_total // 3) is True
+
+	steps = get_steps('job-test-optimize-job-queued')
+
+	assert len(steps) > 1
+
+	for step in steps:
+		assert step.get('status') == 'queued'
