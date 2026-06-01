@@ -64,7 +64,18 @@ def submit_jobs(halt_on_error : bool) -> bool:
 
 
 def delete_job(job_id : str) -> bool:
+	clean_step_outputs(job_id)
 	return delete_job_file(job_id)
+
+
+def clean_step_outputs(job_id : str) -> bool:
+	for index, step in enumerate(get_steps(job_id)):
+		output_path = step.get('args').get('output_path')
+		step_output_path = get_step_output_path(job_id, index, output_path)
+
+		if step_output_path and is_file(step_output_path):
+			remove_file(step_output_path)
+	return True
 
 
 def delete_jobs(halt_on_error : bool) -> bool:

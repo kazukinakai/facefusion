@@ -3,9 +3,9 @@ import subprocess
 import pytest
 
 from facefusion.download import conditional_download
-from facefusion.filesystem import copy_file
+from facefusion.filesystem import copy_file, is_file
 from facefusion.jobs.job_helper import get_step_output_path
-from facefusion.jobs.job_manager import add_step, clear_jobs, create_job, init_jobs, move_job_file, set_step_status, submit_job, submit_jobs
+from facefusion.jobs.job_manager import add_step, clear_jobs, create_job, delete_job, init_jobs, move_job_file, set_step_status, submit_job, submit_jobs
 from facefusion.jobs.job_runner import collect_output_set, finalize_steps, retry_job, retry_jobs, run_job, run_jobs, run_steps
 from facefusion.types import Args
 from .helper import get_test_example_file, get_test_examples_directory, get_test_jobs_directory, get_test_output_file, is_test_output_file, prepare_test_output_directory
@@ -324,3 +324,37 @@ def test_retry_job_resume() -> None:
 	assert retry_job('job-test-retry-job-resume', process_step_tracked) is True
 	assert processed_indices == [ 1 ]
 	assert is_test_output_file('output-1.jpg') is True
+
+
+def test_delete_job_cleans_step_outputs() -> None:
+	args =\
+	{
+		'source_path': get_test_example_file('source.jpg'),
+		'target_path': get_test_example_file('target-240p.jpg'),
+		'output_path': get_test_output_file('output-delete.jpg')
+	}
+
+	create_job('job-test-delete-cleans')
+	add_step('job-test-delete-cleans', args)
+	step_output_path = get_step_output_path('job-test-delete-cleans', 0, args.get('output_path'))
+	copy_file(args.get('target_path'), step_output_path)
+
+	assert is_file(step_output_path) is True
+	assert delete_job('job-test-delete-cleans') is True
+	assert is_file(step_output_path) is False
+
+
+def test_finalize_steps_missing_output() -> None:
+	args =\
+	{
+		'source_path': get_test_example_file('source.jpg'),
+		'target_path': get_test_example_file('target-240p.jpg'),
+		'output_path': get_test_output_file('output-missing.jpg')
+	}
+
+	create_job('job-test-finalize-missing')
+	add_step('job-test-finalize-missing', args)
+	add_step('job-test-finalize-missing', args)
+	copy_file(args.get('target_path'), get_step_output_path('job-test-finalize-missing', 0, args.get('output_path')))
+
+	assert finalize_steps('job-test-finalize-missing') is False
