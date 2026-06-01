@@ -3,7 +3,7 @@ from typing import Optional, Tuple
 
 import gradio
 
-from facefusion import process_manager, state_manager, translator
+from facefusion import config, process_manager, state_manager, translator
 from facefusion.args import collect_step_args
 from facefusion.core import process_step
 from facefusion.filesystem import is_directory, is_image, is_video
@@ -90,11 +90,12 @@ def run() -> Tuple[gradio.Button, gradio.Button, gradio.Image, gradio.Video]:
 
 def create_and_run_job(step_args : Args) -> bool:
 	job_id = job_helper.suggest_job_id('ui')
+	step_frame_total = config.get_int_value('frame_extraction', 'step_frame_total', '0') or 0
 
 	for key in job_store.get_job_keys():
 		state_manager.sync_item(key) #type:ignore[arg-type]
 
-	return job_manager.create_job(job_id) and job_manager.add_step(job_id, step_args) and job_manager.submit_job(job_id) and job_runner.run_job(job_id, process_step)
+	return job_manager.create_job(job_id) and job_manager.add_step(job_id, step_args) and job_manager.submit_job(job_id) and (not step_frame_total or job_manager.optimize_job(job_id, step_frame_total)) and job_runner.run_job(job_id, process_step)
 
 
 def stop() -> Tuple[gradio.Button, gradio.Button, gradio.Image, gradio.Video]:
