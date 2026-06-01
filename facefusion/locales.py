@@ -138,6 +138,7 @@ LOCALES : Locales =\
 			'trim_frame_end': 'specify the ending frame of the target video',
 			'temp_frame_format': 'specify the temporary resources format',
 			'keep_temp': 'keep the temporary resources after processing',
+			'resume': 'split long videos into steps so an interrupted run can resume from the last completed step',
 			'output_image_quality': 'specify the image quality which translates to the image compression',
 			'output_image_scale': 'specify the image scale based on the target image',
 			'output_audio_encoder': 'specify the encoder used for the audio',

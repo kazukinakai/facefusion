@@ -1,3 +1,4 @@
+from math import ceil
 from time import sleep
 from typing import Optional, Tuple
 
@@ -12,6 +13,10 @@ from facefusion.temp_helper import clear_temp_directory
 from facefusion.types import Args, UiWorkflow
 from facefusion.uis.core import get_ui_component
 from facefusion.uis.ui_helper import suggest_output_path
+from facefusion.vision import count_video_frame_total
+
+RESUME_CHUNK_COUNT = 4
+RESUME_MIN_FRAME_TOTAL = 600
 
 INSTANT_RUNNER_WRAPPER : Optional[gradio.Row] = None
 INSTANT_RUNNER_START_BUTTON : Optional[gradio.Button] = None
@@ -90,12 +95,33 @@ def run() -> Tuple[gradio.Button, gradio.Button, gradio.Image, gradio.Video]:
 
 def create_and_run_job(step_args : Args) -> bool:
 	job_id = job_helper.suggest_job_id('ui')
-	step_frame_total = config.get_int_value('frame_extraction', 'step_frame_total', '0') or 0
+	step_frame_total = resolve_step_frame_total(step_args.get('target_path'))
 
 	for key in job_store.get_job_keys():
 		state_manager.sync_item(key) #type:ignore[arg-type]
 
 	return job_manager.create_job(job_id) and job_manager.add_step(job_id, step_args) and job_manager.submit_job(job_id) and (not step_frame_total or job_manager.optimize_job(job_id, step_frame_total)) and job_runner.run_job(job_id, process_step)
+
+
+def resolve_step_frame_total(target_path : str) -> int:
+	if not state_manager.get_item('resume'):
+		return 0
+	if 'lip_syncer' in (state_manager.get_item('processors') or []):
+		return 0
+
+	explicit_step_frame_total = config.get_int_value('frame_extraction', 'step_frame_total', '0') or 0
+
+	if explicit_step_frame_total > 0:
+		return explicit_step_frame_total
+
+	frame_total = count_video_frame_total(target_path)
+	trim_frame_start = state_manager.get_item('trim_frame_start') or 0
+	trim_frame_end = min(state_manager.get_item('trim_frame_end') or frame_total, frame_total)
+	frame_range = trim_frame_end - trim_frame_start
+
+	if frame_range < RESUME_MIN_FRAME_TOTAL:
+		return 0
+	return ceil(frame_range / RESUME_CHUNK_COUNT)
 
 
 def stop() -> Tuple[gradio.Button, gradio.Button, gradio.Image, gradio.Video]:

@@ -15,6 +15,8 @@ def render() -> None:
 
 	if state_manager.get_item('keep_temp'):
 		common_options.append('keep-temp')
+	if state_manager.get_item('resume'):
+		common_options.append('resume')
 
 	COMMON_OPTIONS_CHECKBOX_GROUP = gradio.Checkboxgroup(
 		label = translator.get('uis.common_options_checkbox_group'),
@@ -29,4 +31,6 @@ def listen() -> None:
 
 def update(common_options : List[str]) -> None:
 	keep_temp = 'keep-temp' in common_options
+	resume = 'resume' in common_options
 	state_manager.set_item('keep_temp', keep_temp)
+	state_manager.set_item('resume', resume)
