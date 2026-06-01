@@ -13,10 +13,9 @@ from facefusion.temp_helper import clear_temp_directory
 from facefusion.types import Args, UiWorkflow
 from facefusion.uis.core import get_ui_component
 from facefusion.uis.ui_helper import suggest_output_path
-from facefusion.vision import count_video_frame_total
+from facefusion.vision import count_video_frame_total, detect_video_fps
 
-RESUME_CHUNK_COUNT = 4
-RESUME_MIN_FRAME_TOTAL = 600
+RESUME_STEP_MINUTES = 30
 
 INSTANT_RUNNER_WRAPPER : Optional[gradio.Row] = None
 INSTANT_RUNNER_START_BUTTON : Optional[gradio.Button] = None
@@ -118,10 +117,11 @@ def resolve_step_frame_total(target_path : str) -> int:
 	trim_frame_start = state_manager.get_item('trim_frame_start') or 0
 	trim_frame_end = min(state_manager.get_item('trim_frame_end') or frame_total, frame_total)
 	frame_range = trim_frame_end - trim_frame_start
+	step_frame_total = ceil(RESUME_STEP_MINUTES * 60 * (detect_video_fps(target_path) or 25))
 
-	if frame_range < RESUME_MIN_FRAME_TOTAL:
+	if frame_range <= step_frame_total:
 		return 0
-	return ceil(frame_range / RESUME_CHUNK_COUNT)
+	return step_frame_total
 
 
 def stop() -> Tuple[gradio.Button, gradio.Button, gradio.Image, gradio.Video]:

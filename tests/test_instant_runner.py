@@ -47,20 +47,23 @@ def test_resolve_step_frame_total_explicit() -> None:
 
 
 def test_resolve_step_frame_total_short(monkeypatch : pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr(instant_runner, 'count_video_frame_total', lambda target_path : 270)
+	monkeypatch.setattr(instant_runner, 'detect_video_fps', lambda target_path : 30)
+	monkeypatch.setattr(instant_runner, 'count_video_frame_total', lambda target_path : 18000)
 
 	assert instant_runner.resolve_step_frame_total('target.mp4') == 0
 
 
 def test_resolve_step_frame_total_long(monkeypatch : pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr(instant_runner, 'count_video_frame_total', lambda target_path : 1000)
+	monkeypatch.setattr(instant_runner, 'detect_video_fps', lambda target_path : 30)
+	monkeypatch.setattr(instant_runner, 'count_video_frame_total', lambda target_path : 108000)
 
-	assert instant_runner.resolve_step_frame_total('target.mp4') == 250
+	assert instant_runner.resolve_step_frame_total('target.mp4') == 54000
 
 
 def test_resolve_step_frame_total_respects_trim(monkeypatch : pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr(instant_runner, 'count_video_frame_total', lambda target_path : 4000)
-	state_manager.init_item('trim_frame_start', 1000)
-	state_manager.init_item('trim_frame_end', 3000)
+	monkeypatch.setattr(instant_runner, 'detect_video_fps', lambda target_path : 30)
+	monkeypatch.setattr(instant_runner, 'count_video_frame_total', lambda target_path : 108000)
+	state_manager.init_item('trim_frame_start', 0)
+	state_manager.init_item('trim_frame_end', 18000)
 
-	assert instant_runner.resolve_step_frame_total('target.mp4') == 500
+	assert instant_runner.resolve_step_frame_total('target.mp4') == 0
