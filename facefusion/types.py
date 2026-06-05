@@ -146,6 +146,7 @@ EncoderSet = TypedDict('EncoderSet',
 	'video' : List[VideoEncoder]
 })
 VideoPreset = Literal['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow']
+OutputFileNaming = Literal['hash', 'target', 'target_index']
 
 BenchmarkMode = Literal['warm', 'cold']
 BenchmarkResolution = Literal['240p', '360p', '540p', '720p', '1080p', '1440p', '2160p']
@@ -313,6 +314,7 @@ StateKey = Literal\
 	'output_video_quality',
 	'output_video_scale',
 	'output_video_fps',
+	'output_file_naming',
 	'processors',
 	'open_browser',
 	'ui_layouts',
@@ -385,6 +387,7 @@ State = TypedDict('State',
 	'output_video_quality' : int,
 	'output_video_scale' : Scale,
 	'output_video_fps' : float,
+	'output_file_naming' : OutputFileNaming,
 	'processors' : List[str],
 	'open_browser' : bool,
 	'ui_layouts' : List[str],

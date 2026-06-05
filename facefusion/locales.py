@@ -149,6 +149,7 @@ LOCALES : Locales =\
 			'output_video_quality': 'specify the video quality which translates to the video compression',
 			'output_video_scale': 'specify the video scale based on the target video',
 			'output_video_fps': 'specify the video fps based on the target video',
+			'output_file_naming': 'name the output file by state hash, target name, or target name with a collision index',
 			'processors': 'load a single or multiple processors (choices: {choices}, ...)',
 			'background-remover-model': 'choose the model responsible for removing the background',
 			'background-remover-color': 'apply red, green blue and alpha values of the background',
