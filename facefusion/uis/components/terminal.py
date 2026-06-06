@@ -32,8 +32,7 @@ def render() -> None:
 		value = read_logs,
 		lines = 8,
 		max_lines = 8,
-		every = 0.5,
-		show_copy_button = True
+		every = 0.5
 	)
 
 
