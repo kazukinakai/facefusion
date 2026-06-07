@@ -1,4 +1,5 @@
-gradio==6.7.0
+gradio-rangeslider==0.0.8
+gradio==5.44.1
 numpy==2.2.1
 onnx==1.21.0
 onnxruntime==1.24.4

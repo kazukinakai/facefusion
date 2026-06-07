@@ -2,7 +2,6 @@ import gradio
 
 from facefusion import state_manager
 from facefusion.uis.components import about, job_list, job_list_options
-from facefusion.uis.core import get_css, get_theme
 
 
 def pre_check() -> bool:
@@ -29,4 +28,4 @@ def listen() -> None:
 
 
 def run(ui : gradio.Blocks) -> None:
-	ui.launch(favicon_path = 'facefusion.ico', theme = get_theme(), css = get_css(), inbrowser = state_manager.get_item('open_browser'))
+	ui.launch(favicon_path = 'facefusion.ico', inbrowser = state_manager.get_item('open_browser'))
