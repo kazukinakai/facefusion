@@ -57,6 +57,17 @@ def get_available_encoder_set() -> EncoderSet:
 	return facefusion.ffmpeg.get_available_encoder_set()
 
 
+def probe_video_tag(video_path : str) -> str:
+	process = subprocess.run([ 'ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_tag_string', '-of', 'default=nokey=1:noprint_wrappers=1', video_path ], capture_output = True, text = True)
+	return process.stdout.strip()
+
+
+def is_faststart(video_path : str) -> bool:
+	with open(video_path, 'rb') as video_file:
+		video_data = video_file.read()
+	return video_data.find(b'moov') < video_data.find(b'mdat')
+
+
 def test_get_available_encoder_set() -> None:
 	available_encoder_set = get_available_encoder_set()
 
@@ -116,6 +127,39 @@ def test_merge_video() -> None:
 	state_manager.init_item('output_video_encoder', 'libx264')
 
 
+def test_merge_video_video_tag() -> None:
+	target_paths =\
+	[
+		get_test_example_file('target-240p-16khz.avi'),
+		get_test_example_file('target-240p-16khz.m4v'),
+		get_test_example_file('target-240p-16khz.mkv'),
+		get_test_example_file('target-240p-16khz.mp4'),
+		get_test_example_file('target-240p-16khz.mov'),
+		get_test_example_file('target-240p-16khz.webm'),
+		get_test_example_file('target-240p-16khz.wmv')
+	]
+	hevc_video_encoders = [ 'libx265', 'hevc_nvenc', 'hevc_amf', 'hevc_qsv', 'hevc_videotoolbox' ]
+
+	for target_path in target_paths:
+		is_isobmff_container = os.path.splitext(target_path)[1] in [ '.mp4', '.mov' ]
+
+		for output_video_encoder in get_available_encoder_set().get('video'):
+			state_manager.init_item('output_video_encoder', output_video_encoder)
+			create_temp_directory(target_path)
+			extract_frames(target_path, (452, 240), 25.0, 0, 1)
+
+			assert merge_video(target_path, 25.0, (452, 240), 25.0, 0, 1) is True
+
+			if is_isobmff_container and output_video_encoder in hevc_video_encoders:
+				assert probe_video_tag(get_temp_file_path(target_path)) == 'hvc1'
+			elif is_isobmff_container:
+				assert probe_video_tag(get_temp_file_path(target_path)) != 'hvc1'
+
+			clear_temp_directory(target_path)
+
+	state_manager.init_item('output_video_encoder', 'libx264')
+
+
 def test_concat_video() -> None:
 	output_path = get_test_output_file('test-concat-video.mp4')
 	temp_output_paths =\
@@ -159,6 +203,29 @@ def test_restore_audio() -> None:
 		clear_temp_directory(target_path)
 
 	state_manager.init_item('output_audio_encoder', 'aac')
+
+
+def test_restore_audio_faststart() -> None:
+	test_set =\
+	[
+		(get_test_example_file('target-240p-16khz.avi'), get_test_output_file('target-240p-16khz.avi')),
+		(get_test_example_file('target-240p-16khz.m4v'), get_test_output_file('target-240p-16khz.m4v')),
+		(get_test_example_file('target-240p-16khz.mkv'), get_test_output_file('target-240p-16khz.mkv')),
+		(get_test_example_file('target-240p-16khz.mp4'), get_test_output_file('target-240p-16khz.mp4')),
+		(get_test_example_file('target-240p-16khz.mov'), get_test_output_file('target-240p-16khz.mov')),
+		(get_test_example_file('target-240p-16khz.webm'), get_test_output_file('target-240p-16khz.webm')),
+		(get_test_example_file('target-240p-16khz.wmv'), get_test_output_file('target-240p-16khz.wmv'))
+	]
+
+	for target_path, output_path in test_set:
+		create_temp_directory(target_path)
+		copy_file(target_path, get_temp_file_path(target_path))
+
+		assert restore_audio(target_path, output_path, 0, 270) is True
+		if os.path.splitext(output_path)[1] in [ '.mp4', '.mov' ]:
+			assert is_faststart(output_path) is True
+
+		clear_temp_directory(target_path)
 
 
 def test_replace_audio() -> None:
