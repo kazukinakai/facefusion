@@ -25,6 +25,26 @@ def get_temp_frames_pattern(temp_path : str, output_path : str, temp_frame_forma
 	return os.path.join(temp_directory_path, temp_frame_prefix + '.' + temp_frame_format)
 
 
+# Processed-frame store (resume): processed frames live in a `processed/` subdir
+# so their existence is an unambiguous per-frame "done" marker, separate from the
+# raw extracted frames (which stay in place). Used in resume mode only — merge
+# reads from here and process writes here.
+def get_processed_directory_path(temp_path : str, output_path : str) -> str:
+	return os.path.join(get_temp_directory_path(temp_path, output_path), 'processed')
+
+
+def get_processed_frames_pattern(temp_path : str, output_path : str, temp_frame_format : str, temp_frame_prefix : str) -> str:
+	return os.path.join(get_processed_directory_path(temp_path, output_path), temp_frame_prefix + '.' + temp_frame_format)
+
+
+def resolve_processed_frame_paths(temp_path : str, output_path : str, temp_frame_format : str) -> List[str]:
+	return resolve_file_pattern(get_processed_frames_pattern(temp_path, output_path, temp_frame_format, '*'))
+
+
+def create_processed_directory(temp_path : str, output_path : str) -> bool:
+	return create_directory(get_processed_directory_path(temp_path, output_path))
+
+
 def get_temp_directory_path(temp_path : str, output_path : str) -> str:
 	temp_file_name = get_file_name(output_path)
 	return os.path.join(temp_path, 'facefusion', temp_file_name)

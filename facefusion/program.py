@@ -571,6 +571,17 @@ def create_frame_extraction_program() -> ArgumentParser:
 		],
 		scopes = [ 'api', 'cli' ]
 	)
+	capability_store.register_capability_set(
+		[
+			group_frame_extraction.add_argument(
+				'--resume',
+				help = 'resume an interrupted video run from the already-processed frames',
+				action = 'store_true',
+				default = config.get_bool_value('frame_extraction', 'resume')
+			)
+		],
+		scopes = [ 'api', 'cli' ]
+	)
 
 	return program
 

@@ -9,7 +9,7 @@ from tqdm import tqdm
 import facefusion.choices
 from facefusion import ffmpeg_builder, logger, process_manager, state_manager, translator
 from facefusion.filesystem import get_file_format, remove_file
-from facefusion.temp_helper import get_temp_file_path, get_temp_frames_pattern
+from facefusion.temp_helper import get_processed_frames_pattern, get_temp_file_path, get_temp_frames_pattern
 from facefusion.types import ApiSecurityStrategy, AudioEncoder, Buffer, Command, EncoderSet, Fps, Resolution, SampleRate, UpdateProgress, VideoEncoder, VideoFormat
 from facefusion.vision import detect_video_duration, detect_video_fps, pack_resolution, predict_video_frame_total
 
@@ -254,7 +254,13 @@ def merge_video(target_path : str, output_path : str, temp_video_fps : Fps, outp
 	merge_frame_total = predict_video_frame_total(target_path, output_video_fps, trim_frame_start, trim_frame_end)
 	temp_video_path = get_temp_file_path(state_manager.get_temp_path(), output_path)
 	temp_video_format = cast(VideoFormat, get_file_format(output_path))
-	temp_frames_pattern = get_temp_frames_pattern(state_manager.get_temp_path(), output_path, state_manager.get_item('temp_frame_format'), '%08d')
+	# Resume reads the processed-frame store; default reads the raw frames that
+	# were processed in place. Frame numbering is identical (%08d), so the merge
+	# is unaffected.
+	if state_manager.get_item('resume'):
+		temp_frames_pattern = get_processed_frames_pattern(state_manager.get_temp_path(), output_path, state_manager.get_item('temp_frame_format'), '%08d')
+	else:
+		temp_frames_pattern = get_temp_frames_pattern(state_manager.get_temp_path(), output_path, state_manager.get_item('temp_frame_format'), '%08d')
 
 	output_video_encoder = fix_video_encoder(temp_video_format, output_video_encoder)
 	commands = ffmpeg_builder.chain(

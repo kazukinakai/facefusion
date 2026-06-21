@@ -2,10 +2,10 @@ from facefusion import content_analyser, ffmpeg, logger, state_manager, translat
 from facefusion.common_helper import get_first
 from facefusion.filesystem import filter_audio_paths, is_video
 from facefusion.media_helper import restrict_trim_frame
-from facefusion.temp_helper import move_temp_file, resolve_temp_frame_paths
+from facefusion.temp_helper import clear_temp_directory, move_temp_file, resolve_temp_frame_paths
 from facefusion.time_helper import calculate_end_time
 from facefusion.types import ErrorCode, Fps, Resolution
-from facefusion.vision import detect_image_resolution, detect_video_resolution, pack_resolution, restrict_trim_video_frame, restrict_video_fps, restrict_video_resolution, scale_resolution
+from facefusion.vision import detect_image_resolution, detect_video_resolution, pack_resolution, predict_video_frame_total, restrict_trim_video_frame, restrict_video_fps, restrict_video_resolution, scale_resolution
 from facefusion.workflows.core import is_process_stopping
 
 
@@ -22,6 +22,16 @@ def create_temp_frames() -> ErrorCode:
 	output_video_resolution = scale_resolution(detect_video_resolution(state_manager.get_item('target_path')), state_manager.get_item('output_video_scale'))
 	temp_video_resolution = restrict_video_resolution(state_manager.get_item('target_path'), output_video_resolution)
 	temp_video_fps = restrict_video_fps(state_manager.get_item('target_path'), state_manager.get_item('output_video_fps'))
+
+	# Resume: a previous run already extracted every frame, so skip re-decoding
+	# the whole video. Frames are kept (raw + processed) across runs.
+	if state_manager.get_item('resume'):
+		frame_total = predict_video_frame_total(state_manager.get_item('target_path'), temp_video_fps, trim_frame_start, trim_frame_end)
+		extracted_total = len(resolve_temp_frame_paths(state_manager.get_temp_path(), state_manager.get_item('output_path'), state_manager.get_item('temp_frame_format')))
+		if frame_total and extracted_total >= frame_total:
+			logger.debug(translator.get('extracting_frames_succeeded'), __name__)
+			return 0
+
 	logger.info(translator.get('extracting_frames').format(resolution=pack_resolution(temp_video_resolution), fps=temp_video_fps), __name__)
 
 	if ffmpeg.extract_frames(state_manager.get_item('target_path'), state_manager.get_item('output_path'), temp_video_resolution, temp_video_fps, trim_frame_start, trim_frame_end):
@@ -86,6 +96,11 @@ def restore_audio() -> ErrorCode:
 
 def finalize_video(start_time : float) -> ErrorCode:
 	if is_video(state_manager.get_item('output_path')):
+		# Resume: the workflow's clear() is a no-op in resume mode, so drop the
+		# temp store (raw + processed) here now that the run succeeded. A failed
+		# run returns before this and keeps the store for the next resume.
+		if state_manager.get_item('resume'):
+			clear_temp_directory(state_manager.get_temp_path(), state_manager.get_item('output_path'))
 		logger.info(translator.get('processing_video_succeeded').format(seconds = calculate_end_time(start_time)), __name__)
 	else:
 		logger.error(translator.get('processing_video_failed'), __name__)

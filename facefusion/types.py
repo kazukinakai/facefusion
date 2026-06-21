@@ -503,6 +503,7 @@ StateKey = Literal\
 	'trim_frame_end',
 	'temp_frame_format',
 	'keep_temp',
+	'resume',
 	'output_image_quality',
 	'output_image_scale',
 	'output_audio_encoder',

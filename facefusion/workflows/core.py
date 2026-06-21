@@ -1,3 +1,4 @@
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy
@@ -6,9 +7,9 @@ from tqdm import tqdm
 from facefusion import content_analyser, logger, process_manager, state_manager, translator
 from facefusion.audio import create_empty_audio_frame, get_audio_frame, get_voice_frame
 from facefusion.common_helper import get_first
-from facefusion.filesystem import filter_audio_paths
+from facefusion.filesystem import filter_audio_paths, is_file
 from facefusion.processors.core import get_processors_modules
-from facefusion.temp_helper import clear_temp_directory, create_temp_directory, resolve_temp_frame_paths
+from facefusion.temp_helper import clear_temp_directory, create_processed_directory, create_temp_directory, get_processed_directory_path, resolve_temp_frame_paths
 from facefusion.types import AudioFrame, ErrorCode, VisionFrame
 from facefusion.vision import conditional_merge_vision_mask, extract_vision_mask, read_static_image, read_static_images, read_static_video_frame, restrict_video_fps, write_image
 
@@ -23,10 +24,17 @@ def is_process_stopping() -> bool:
 def setup() -> ErrorCode:
 	if create_temp_directory(state_manager.get_temp_path(), state_manager.get_item('output_path')):
 		logger.debug(translator.get('creating_temp'), __name__)
+	if state_manager.get_item('resume'):
+		create_processed_directory(state_manager.get_temp_path(), state_manager.get_item('output_path'))
 	return 0
 
 
 def clear() -> ErrorCode:
+	# Resume keeps the temp store (raw + processed frames) across runs, so the
+	# workflow's leading/trailing clear must not wipe it. finalize_video does the
+	# success-time cleanup instead; a failed run leaves the store for the resume.
+	if state_manager.get_item('resume'):
+		return 0
 	if clear_temp_directory(state_manager.get_temp_path(), state_manager.get_item('output_path')):
 		logger.debug(translator.get('clearing_temp'), __name__)
 	return 0
@@ -77,6 +85,13 @@ def conditional_get_reference_vision_frame() -> VisionFrame:
 
 
 def process_temp_frame(temp_frame_path : str, frame_number : int) -> bool:
+	# Resume: skip a frame already committed to the processed store. The raw
+	# frame is kept (not deleted), so resolve_temp_frame_paths still yields the
+	# full set and the enumerate-based frame_number — used for audio sync — stays
+	# correct. Existence of the processed file is the durable "done" marker.
+	if state_manager.get_item('resume') and is_file(os.path.join(get_processed_directory_path(state_manager.get_temp_path(), state_manager.get_item('output_path')), os.path.basename(temp_frame_path))):
+		return True
+
 	reference_vision_frame = conditional_get_reference_vision_frame()
 	source_vision_frames = read_static_images(state_manager.get_item('source_paths'))
 	target_vision_frame = read_static_image(temp_frame_path, 'rgba')
@@ -98,6 +113,17 @@ def process_temp_frame(temp_frame_path : str, frame_number : int) -> bool:
 		})
 
 	temp_vision_frame = conditional_merge_vision_mask(temp_vision_frame, temp_vision_mask)
+
+	# Resume: write to the processed store atomically (tmp + replace) so a crash
+	# never leaves a half-written frame that looks "done". Raw frame stays put.
+	if state_manager.get_item('resume'):
+		processed_frame_path = os.path.join(get_processed_directory_path(state_manager.get_temp_path(), state_manager.get_item('output_path')), os.path.basename(temp_frame_path))
+		processed_frame_temp_path = processed_frame_path + '.tmp'
+		if not write_image(processed_frame_temp_path, temp_vision_frame):
+			return False
+		os.replace(processed_frame_temp_path, processed_frame_path)
+		return True
+
 	return write_image(temp_frame_path, temp_vision_frame)
 
 
