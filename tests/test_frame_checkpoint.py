@@ -382,15 +382,23 @@ def test_fingerprint_detects_same_size_change_with_restored_modification_time(tm
 
 
 @pytest.mark.parametrize('api_owner', [ False, True ])
-def test_default_checkpoint_root_handles_pod_identity_without_merging_api_owners(api_owner : bool, tmp_path : Path, mocker : MockerFixture) -> None:
-	state_manager.init_item('resume_path', None)
+@pytest.mark.parametrize('explicit_root', [ False, True ])
+def test_default_checkpoint_root_handles_pod_identity_without_merging_api_owners(api_owner : bool, explicit_root : bool, tmp_path : Path, mocker : MockerFixture) -> None:
+	state_manager.init_item('resume_path', str(tmp_path / 'persistent') if explicit_root else None)
 	local = mocker.patch.object(frame_checkpoint, 'resolve_local_id', return_value = 'pod-one')
 	temp = mocker.patch.object(state_manager, 'get_temp_path', return_value = str(tmp_path / ('user-one' if api_owner else 'pod-one')))
 	first = frame_checkpoint.get_directory()
+	with frame_checkpoint.session():
+		assert frame_checkpoint.write_frame(0, numpy.zeros((24, 32, 3), dtype = numpy.uint8))
 	local.return_value = 'pod-two'
 	temp.return_value = str(tmp_path / ('user-two' if api_owner else 'pod-two'))
 	second = frame_checkpoint.get_directory()
 	assert (first != second) if api_owner else (first == second)
+	with frame_checkpoint.session():
+		assert (frame_checkpoint.read_frame(0) is None) if api_owner else (frame_checkpoint.read_frame(0) is not None)
+		assert frame_checkpoint.finish() == 0
+	if api_owner:
+		assert first.is_dir()
 
 
 def test_completion_marker_failure_keeps_encoded_steps_for_retry(tmp_path : Path, mocker : MockerFixture) -> None:

@@ -34,14 +34,16 @@ def is_enabled() -> bool:
 	return bool(state_manager.get_item('resume')) and state_manager.get_item('workflow_mode') == 'image-to-video'
 
 
-def get_root() -> Path:
-	resume_path = state_manager.get_item('resume_path')
-	if resume_path:
-		return Path(resume_path)
+def get_root(resume_path : Optional[str] = None) -> Path:
+	resume_path = resume_path or state_manager.get_item('resume_path')
 	temp_path = Path(state_manager.get_temp_path())
-	if temp_path.name == resolve_local_id():
-		return temp_path.parent
-	return temp_path
+	owner_id = temp_path.name
+	if owner_id == resolve_local_id():
+		return Path(resume_path) if resume_path else temp_path.parent
+	root = Path(resume_path) if resume_path else temp_path.parent
+	if root.name == owner_id and root.parent.name == 'owners':
+		return root
+	return root / 'owners' / owner_id
 
 
 def get_directory() -> Path:
@@ -136,7 +138,7 @@ def job_session(job_id : JobId) -> Iterator[None]:
 	for step in job_manager.get_steps(job_id):
 		args = step.get('args')
 		if args.get('resume'):
-			root = Path(args.get('resume_path')) if args.get('resume_path') else get_root()
+			root = get_root(args.get('resume_path'))
 			identity = hashlib.sha256(job_id.encode()).hexdigest()
 			directories.add(root / 'facefusion-resume' / 'jobs' / identity / 'processed')
 	with ExitStack() as stack:
