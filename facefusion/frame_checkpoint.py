@@ -56,6 +56,8 @@ def hash_file(path : Path) -> str:
 	path = path.resolve()
 	status = path.stat()
 	identity = (status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns, status.st_ctime_ns)
+	if sys.platform == 'win32':
+		return hash_file_version.__wrapped__(path, identity)
 	return hash_file_version(path, identity)
 
 

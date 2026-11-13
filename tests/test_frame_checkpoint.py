@@ -465,3 +465,16 @@ def test_server_ini_controls_checkpoint_encoding(configured : Optional[str], exp
 			assert path.read_bytes().startswith(b'\xff\xd8' if expected == 'jpeg' else b'\x89PNG\r\n\x1a\n')
 	finally:
 		config.get_static_config_parser.cache_clear()
+
+
+def test_windows_fingerprint_does_not_trust_unchanged_creation_time(tmp_path : Path, mocker : MockerFixture) -> None:
+	from types import SimpleNamespace
+
+	path = tmp_path / 'model.onnx'
+	path.write_bytes(b'first')
+	status = path.stat()
+	mocker.patch.object(Path, 'stat', return_value = status)
+	mocker.patch.object(frame_checkpoint, 'sys', SimpleNamespace(platform = 'win32'))
+	original = frame_checkpoint.hash_file(path)
+	path.write_bytes(b'other')
+	assert frame_checkpoint.hash_file(path) != original
