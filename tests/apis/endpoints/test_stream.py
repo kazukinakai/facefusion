@@ -104,12 +104,19 @@ def test_stream_image(test_client : TestClient) -> None:
 
 		assert stream_exception.value.code == 1000
 
-		test_client.delete('/session', headers =
+		destroy_session_response = test_client.delete('/session', headers =
 		{
 			'Authorization': 'Bearer ' + access_token
 		})
 
-		assert websocket.receive() == { 'type': 'websocket.close', 'code': 1000, 'reason': '' }
+		assert destroy_session_response.status_code == 409
+
+	destroy_session_response = test_client.delete('/session', headers =
+	{
+		'Authorization': 'Bearer ' + access_token
+	})
+
+	assert destroy_session_response.status_code == 200
 
 
 @pytest.mark.parametrize('video_codec', [ 'av1', 'vp8' ])
