@@ -1,6 +1,6 @@
 import os
 
-from facefusion import process_manager, session_manager, state_manager, store_manager
+from facefusion import frame_checkpoint, process_manager, session_manager, state_manager, store_manager
 from facefusion.ffmpeg import concat_video
 from facefusion.filesystem import are_images, are_videos, copy_file, create_directory, is_directory, is_file, move_directory, move_file, remove_directory, remove_file, resolve_file_paths
 from facefusion.jobs import job_helper, job_manager
@@ -22,7 +22,10 @@ def run_job(job_id : JobId, process_step : ProcessStep) -> bool:
 			clean_steps(job_id)
 			process_manager.end()
 			session_manager.join_session()
-			return job_manager.move_job_file(job_id, 'completed')
+			completed = job_manager.move_job_file(job_id, 'completed')
+			if completed:
+				frame_checkpoint.finish_job(job_id)
+			return completed
 
 		clean_steps(job_id)
 		process_manager.end()

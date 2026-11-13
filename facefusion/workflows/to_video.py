@@ -6,7 +6,7 @@ from typing import Deque, Tuple
 import cv2
 import numpy
 
-from facefusion import cli_progress, content_analyser, ffmpeg, logger, process_manager, state_manager, thread_helper, translator, video_manager
+from facefusion import cli_progress, content_analyser, ffmpeg, frame_checkpoint, logger, process_manager, state_manager, thread_helper, translator, video_manager
 from facefusion.audio import restrict_audio_range
 from facefusion.common_helper import get_first, get_middle
 from facefusion.filesystem import filter_audio_paths, is_video
@@ -45,6 +45,10 @@ def create_temp_frames() -> ErrorCode:
 
 
 def process_memory_frame(frame_index : int, temp_video_resolution : Resolution, output_video_resolution : Resolution) -> VisionFrame:
+	if frame_checkpoint.is_enabled():
+		checkpoint_frame = frame_checkpoint.read_frame(frame_index)
+		if checkpoint_frame is not None and (checkpoint_frame.shape[1], checkpoint_frame.shape[0]) == output_video_resolution:
+			return checkpoint_frame
 	target_vision_frames = conditional_get_target_vision_frames(frame_index)
 	target_vision_frame = get_middle(target_vision_frames)
 	temp_vision_frame = target_vision_frame.copy()
@@ -63,7 +67,10 @@ def process_memory_frame(frame_index : int, temp_video_resolution : Resolution, 
 	if state_manager.get_item('temp_pixel_format') == 'bgr24':
 		temp_vision_frame = temp_vision_frame[:, :, :3]
 
-	return numpy.ascontiguousarray(temp_vision_frame)
+	temp_vision_frame = numpy.ascontiguousarray(temp_vision_frame)
+	if frame_checkpoint.is_enabled() and not frame_checkpoint.write_frame(frame_index, temp_vision_frame):
+		raise OSError('Could not commit processed frame checkpoint')
+	return temp_vision_frame
 
 
 def process_memory_frames() -> ErrorCode:

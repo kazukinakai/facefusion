@@ -604,6 +604,29 @@ def create_voice_extractor_program() -> ArgumentParser:
 def create_frame_extraction_program() -> ArgumentParser:
 	program = ArgumentParser(add_help = False)
 	group_frame_extraction = program.add_argument_group('frame extraction')
+	capability_store.register_capability_set(
+		[
+			group_frame_extraction.add_argument(
+				'--resume-path',
+				help = translator.get('help.resume_path'),
+				default = config.get_str_value('frame_extraction', 'resume_path')
+			)
+		],
+		scopes = [ 'cli' ],
+		groups = [ 'frame_extraction' ]
+	)
+	capability_store.register_capability_set(
+		[
+			group_frame_extraction.add_argument(
+				'--resume',
+				help = translator.get('help.resume'),
+				action = 'store_true',
+				default = config.get_bool_value('frame_extraction', 'resume', 'False')
+			)
+		],
+		scopes = [ 'api', 'cli' ],
+		groups = [ 'frame_extraction' ]
+	)
 
 	capability_store.register_capability_set(
 		[

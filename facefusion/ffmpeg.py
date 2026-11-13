@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from typing import BinaryIO, List, Optional, cast
 
 import facefusion.choices
-from facefusion import cli_progress, ffmpeg_builder, ffprobe, logger, process_manager, state_manager, translator, vision
+from facefusion import cli_progress, ffmpeg_builder, ffprobe, frame_checkpoint, logger, process_manager, state_manager, translator, vision
 from facefusion.filesystem import get_file_format, remove_file
 from facefusion.temp_helper import get_temp_file_path, get_temp_frames_pattern
 from facefusion.types import ApiSecurityStrategy, AudioEncoder, Buffer, Command, EncoderSet, Fps, ImageEncoder, Resolution, SampleRate, VideoEncoder, VideoFormat, VideoReaderMetadata
@@ -317,6 +317,8 @@ def merge_video(target_path : str, output_path : str, temp_video_fps : Fps, outp
 	temp_video_path = get_temp_file_path(state_manager.get_temp_path(), output_path)
 	temp_video_format = cast(VideoFormat, get_file_format(output_path))
 	temp_frames_pattern = get_temp_frames_pattern(state_manager.get_temp_path(), output_path, state_manager.get_item('temp_frame_format'), '%08d')
+	if frame_checkpoint.is_enabled():
+		temp_frames_pattern = str(frame_checkpoint.get_directory() / '%08d.png')
 
 	output_video_encoder = fix_video_encoder(temp_video_format, output_video_encoder)
 	commands = ffmpeg_builder.chain(
