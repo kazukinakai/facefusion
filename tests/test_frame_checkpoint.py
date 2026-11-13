@@ -1,7 +1,7 @@
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Optional
 
 import numpy
 import pytest
@@ -427,3 +427,33 @@ def test_completion_marker_failure_keeps_encoded_steps_for_retry(tmp_path : Path
 	assert not step_output.exists()
 	assert not Path(str(step_output) + '.resume.json').exists()
 	assert Path(str(args['output_path'])).is_file()
+
+
+@pytest.mark.parametrize(('configured', 'expected'), [ (None, 'png'), ('png', 'png'), ('jpeg', 'jpeg') ])
+def test_server_ini_controls_checkpoint_encoding(configured : Optional[str], expected : str, tmp_path : Path, mocker : MockerFixture) -> None:
+	from facefusion import args_helper, config
+	from facefusion.program import create_program
+
+	subprocess.run([ 'ffmpeg', '-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=size=32x24:rate=10', '-t', '0.2', '-c:v', 'libx264', state_manager.get_item('target_path') ], check = True)
+	config_path = tmp_path / 'server.ini'
+	persistent_root = tmp_path / 'persistent'
+	content = '[paths]\ntarget_path = ' + state_manager.get_item('target_path') + '\noutput_path = ' + str(tmp_path / 'render.mp4') + '\n'
+	content += '[workflow]\nworkflow_mode = image-to-video\n[frame_extraction]\nresume = true\nresume_path = ' + str(persistent_root) + '\n'
+	if configured is not None:
+		content += 'temp_frame_format = ' + configured + '\n'
+	config_path.write_text(content)
+	mocker.patch.object(sys, 'argv', [ 'facefusion.py', 'run', '--config-path', str(config_path) ])
+	mocker.patch.object(args_helper, 'get_processors_modules', return_value = [])
+	config.get_static_config_parser.cache_clear()
+	try:
+		program = create_program()
+		args_helper.apply_args(vars(program.parse_args()), state_manager.set_item)
+		assert state_manager.get_item('temp_frame_format') == expected
+		assert state_manager.get_item('resume_path') == str(persistent_root)
+		with frame_checkpoint.session():
+			assert frame_checkpoint.write_frame(0, numpy.zeros((24, 32, 3), dtype = numpy.uint8))
+			path = frame_checkpoint.get_frame_path(0)
+			assert path.suffix == '.' + expected
+			assert path.read_bytes().startswith(b'\xff\xd8' if expected == 'jpeg' else b'\x89PNG\r\n\x1a\n')
+	finally:
+		config.get_static_config_parser.cache_clear()
