@@ -47,14 +47,17 @@ def before_all() -> None:
 		).wait()
 
 	for output_video_format in [ 'avi', 'm4v', 'mkv', 'mov', 'mp4', 'webm', 'wmv' ]:
-		ffmpeg.run_ffmpeg(
+		process = ffmpeg.run_ffmpeg(
 			ffmpeg_builder.chain(
 				ffmpeg_builder.set_input(get_test_example_file('source.mp3')),
 				ffmpeg_builder.set_input(get_test_example_file('target-240p.mp4')),
+				ffmpeg_builder.set_audio_encoder('aac') if output_video_format == 'mkv' else [],
 				ffmpeg_builder.set_audio_sample_rate(16000),
-				ffmpeg_builder.set_output(get_test_example_file('target-240p-16khz.' + output_video_format))
+				ffmpeg_builder.force_output(get_test_example_file('target-240p-16khz.' + output_video_format))
 			)
-		).wait()
+		)
+		_, error = process.communicate()
+		assert process.returncode == 0, error.decode()
 
 	ffmpeg.run_ffmpeg(
 		ffmpeg_builder.chain(
@@ -261,7 +264,7 @@ def test_restore_audio() -> None:
 			state_manager.init_item('output_audio_encoder', output_audio_encoder)
 			copy_file(target_path, get_temp_file_path(state_manager.get_temp_path(), output_path))
 
-			assert restore_audio(target_path, output_path, 0, 270) is True
+			assert restore_audio(target_path, output_path, 0, 270) is True, (target_path, output_audio_encoder)
 
 		clear_temp_directory(state_manager.get_temp_path(), output_path)
 
@@ -288,8 +291,8 @@ def test_replace_audio() -> None:
 			state_manager.init_item('output_audio_encoder', output_audio_encoder)
 			copy_file(target_path, get_temp_file_path(state_manager.get_temp_path(), output_path))
 
-			assert replace_audio(get_test_example_file('source.mp3'), output_path) is True
-			assert replace_audio(get_test_example_file('source.wav'), output_path) is True
+			assert replace_audio(get_test_example_file('source.mp3'), output_path) is True, (target_path, output_audio_encoder)
+			assert replace_audio(get_test_example_file('source.wav'), output_path) is True, (target_path, output_audio_encoder)
 
 		clear_temp_directory(state_manager.get_temp_path(), output_path)
 
@@ -399,6 +402,8 @@ def test_fix_audio_encoder() -> None:
 	assert fix_audio_encoder('wmv', 'libopus') == 'aac'
 	assert fix_audio_encoder('mov', 'flac') == 'aac'
 	assert fix_audio_encoder('mov', 'libopus') == 'aac'
+	assert fix_audio_encoder('mov', 'libvorbis') == 'aac'
+	assert fix_audio_encoder('mp4', 'libvorbis') == 'aac'
 	assert fix_audio_encoder('mxf', 'libopus') == 'pcm_s16le'
 	assert fix_audio_encoder('webm', 'aac') == 'libopus'
 	assert fix_audio_encoder('mp4', 'aac') == 'aac'
