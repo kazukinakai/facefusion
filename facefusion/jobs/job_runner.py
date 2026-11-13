@@ -1,6 +1,7 @@
 import os
+from pathlib import Path
 
-from facefusion import frame_checkpoint, process_manager, session_manager, state_manager, store_manager
+from facefusion import frame_checkpoint, logger, process_manager, session_manager, state_manager, store_manager
 from facefusion.ffmpeg import concat_video
 from facefusion.filesystem import are_images, are_videos, copy_file, create_directory, is_directory, is_file, move_directory, move_file, remove_directory, remove_file, resolve_file_paths
 from facefusion.jobs import job_helper, job_manager
@@ -8,6 +9,15 @@ from facefusion.types import JobId, JobOutputSet, ProcessStep, Step, StepIndex
 
 
 def run_job(job_id : JobId, process_step : ProcessStep) -> bool:
+	try:
+		with frame_checkpoint.job_session(job_id):
+			return run_job_steps(job_id, process_step)
+	except OSError as error:
+		logger.warn(str(error), __name__)
+		return False
+
+
+def run_job_steps(job_id : JobId, process_step : ProcessStep) -> bool:
 	queued_job_ids = job_manager.find_job_ids('queued')
 
 	if job_id in queued_job_ids:
@@ -27,7 +37,7 @@ def run_job(job_id : JobId, process_step : ProcessStep) -> bool:
 				frame_checkpoint.finish_job(job_id)
 			return completed
 
-		clean_steps(job_id)
+		clean_steps(job_id, preserve_completed = True)
 		process_manager.end()
 		session_manager.join_session()
 
@@ -54,6 +64,13 @@ def retry_job(job_id : JobId, process_step : ProcessStep) -> bool:
 	failed_job_ids = job_manager.find_job_ids('failed')
 
 	if job_id in failed_job_ids:
+		steps = job_manager.get_steps(job_id)
+		if any(step.get('args').get('resume') for step in steps):
+			for index, step in enumerate(steps):
+				if step.get('status') != 'completed' or not step.get('args').get('resume'):
+					if not job_manager.set_step_status(job_id, index, 'queued'):
+						return False
+			return job_manager.move_job_file(job_id, 'queued') and run_job(job_id, process_step)
 		return job_manager.set_steps_status(job_id, 'queued') and job_manager.move_job_file(job_id, 'queued') and run_job(job_id, process_step)
 	return False
 
@@ -81,7 +98,15 @@ def run_step(job_id : JobId, step_index : StepIndex, step : Step, process_step :
 
 		if is_directory(output_path):
 			return move_directory(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed')
-		return move_file(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed')
+		if not move_file(output_path, step_output_path):
+			return False
+		if step_args.get('resume') and not frame_checkpoint.commit_step(step_args, step_output_path):
+			return False
+		if not job_manager.set_step_status(job_id, step_index, 'completed'):
+			return False
+		if step_args.get('resume'):
+			frame_checkpoint.finish_job(job_id)
+		return True
 	job_manager.set_step_status(job_id, step_index, 'failed')
 	return False
 
@@ -91,6 +116,9 @@ def run_steps(job_id : JobId, process_step : ProcessStep) -> bool:
 
 	if steps:
 		for index, step in enumerate(steps):
+			args = step.get('args')
+			if step.get('status') == 'completed' and args.get('resume') and frame_checkpoint.reuse_step(args, job_helper.get_step_output_path(job_id, index, args.get('output_path'))):
+				continue
 			if not run_step(job_id, index, step, process_step):
 				return False
 		return True
@@ -124,11 +152,15 @@ def finalize_steps(job_id : JobId) -> bool:
 	return True
 
 
-def clean_steps(job_id : JobId) -> bool:
+def clean_steps(job_id : JobId, preserve_completed : bool = False) -> bool:
 	output_set = collect_output_set(job_id)
+	retained = { job_helper.get_step_output_path(job_id, index, step.get('args').get('output_path')) for index, step in enumerate(job_manager.get_steps(job_id)) if preserve_completed and step.get('args').get('resume') and step.get('status') == 'completed' }
 
 	for temp_output_paths in output_set.values():
 		for temp_output_path in temp_output_paths:
+			if temp_output_path in retained:
+				continue
+			Path(temp_output_path + '.resume.json').unlink(missing_ok = True)
 			if is_file(temp_output_path):
 				if not remove_file(temp_output_path):
 					return False

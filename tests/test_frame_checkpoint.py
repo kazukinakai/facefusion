@@ -8,6 +8,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from facefusion import frame_checkpoint, state_manager
+from facefusion.types import Args, ErrorCode, JobId, StepIndex
 from facefusion.workflows import to_video
 
 
@@ -25,6 +26,7 @@ def checkpoint_state(tmp_path : Path) -> Iterator[None]:
 	state_manager.init_item('source_paths', [])
 	state_manager.init_item('output_path', str(tmp_path / 'output.mp4'))
 	state_manager.init_item('temp_path', str(tmp_path / 'temp'))
+	state_manager.init_item('temp_frame_format', 'png')
 	yield
 	state_manager.set_state(previous_state)
 
@@ -46,7 +48,7 @@ def test_corrupt_or_uncommitted_frames_are_not_reused() -> None:
 	frame = numpy.zeros((24, 32, 3), dtype = numpy.uint8)
 	with frame_checkpoint.session():
 		assert frame_checkpoint.write_frame(0, frame)
-		path = frame_checkpoint.get_directory() / '00000000.png'
+		path = frame_checkpoint.get_frame_path(0)
 		path.write_bytes(path.read_bytes()[:-1] + b'!')
 		assert frame_checkpoint.read_frame(0) is None
 		assert frame_checkpoint.write_frame(0, frame)
@@ -140,7 +142,8 @@ def test_concurrent_process_cannot_share_the_same_checkpoint_store() -> None:
 
 
 @pytest.mark.parametrize('strategy', [ 'memory', 'disk' ])
-def test_resumed_video_matches_uninterrupted_video(strategy : str, tmp_path : Path, mocker : MockerFixture) -> None:
+@pytest.mark.parametrize('frame_format', [ 'png', 'jpeg' ])
+def test_resumed_video_matches_uninterrupted_video(strategy : str, frame_format : str, tmp_path : Path, mocker : MockerFixture) -> None:
 	from facefusion import process_manager, video_manager
 	from facefusion.workflows import core
 
@@ -164,7 +167,7 @@ def test_resumed_video_matches_uninterrupted_video(strategy : str, tmp_path : Pa
 		'output_video_quality': 80,
 		'output_video_preset': 'veryfast',
 		'temp_pixel_format': 'bgr24',
-		'temp_frame_format': 'png',
+		'temp_frame_format': frame_format,
 		'processors': [],
 		'output_audio_encoder': 'aac',
 		'output_audio_quality': 80,
@@ -179,16 +182,18 @@ def test_resumed_video_matches_uninterrupted_video(strategy : str, tmp_path : Pa
 	process_manager.start()
 	baseline_path = tmp_path / 'baseline.mp4'
 	resumed_path = tmp_path / 'resumed.mp4'
-	state_manager.init_item('resume', False)
+	state_manager.init_item('resume', True)
 	state_manager.init_item('output_path', str(baseline_path))
-	core.setup()
-	if strategy == 'memory':
-		assert to_video.process_memory_frames() == 0
-	else:
-		assert to_video.create_temp_frames() == 0
-		assert core.process_frames() == 0
-		assert to_video.merge_frames() == 0
-	assert to_video.restore_audio() == 0
+	with frame_checkpoint.session():
+		core.setup()
+		if strategy == 'memory':
+			assert to_video.process_memory_frames() == 0
+		else:
+			assert to_video.create_temp_frames() == 0
+			assert core.process_frames() == 0
+			assert to_video.merge_frames() == 0
+		assert to_video.restore_audio() == 0
+		assert frame_checkpoint.finish() == 0
 	video_manager.clear()
 	state_manager.init_item('resume', True)
 	state_manager.init_item('output_path', str(resumed_path))
@@ -200,7 +205,7 @@ def test_resumed_video_matches_uninterrupted_video(strategy : str, tmp_path : Pa
 		else:
 			assert to_video.create_temp_frames() == 0
 			for index in (0, 3, 7):
-				assert core.process_temp_frame(str(Path(core.state_manager.get_temp_path()) / 'facefusion' / 'resumed' / (format(index, '08d') + '.png')), index)
+				assert core.process_temp_frame(str(Path(core.state_manager.get_temp_path()) / 'facefusion' / 'resumed' / (format(index, '08d') + '.' + frame_format)), index)
 	with frame_checkpoint.session():
 		core.setup()
 		if strategy == 'memory':
@@ -262,3 +267,109 @@ def test_completed_job_cleanup_preserves_another_job_store(mocker : MockerFixtur
 	assert frame_checkpoint.get_directory().is_dir()
 	frame_checkpoint.finish_job('current-job')
 	assert not frame_checkpoint.get_directory().exists()
+
+
+@pytest.mark.parametrize('frame_format', [ 'bmp', 'jpeg', 'png', 'tiff' ])
+def test_checkpoint_uses_selected_frame_format(frame_format : str) -> None:
+	state_manager.init_item('temp_frame_format', frame_format)
+	with frame_checkpoint.session():
+		assert frame_checkpoint.write_frame(5, numpy.full((24, 32, 3), 91, dtype = numpy.uint8))
+		path = frame_checkpoint.get_frame_path(5)
+		assert path.suffix == '.' + frame_format
+		assert path.is_file()
+		assert numpy.array_equal(frame_checkpoint.read_frame(5), numpy.full((24, 32, 3), 91, dtype = numpy.uint8))
+
+
+def test_abrupt_exit_reuses_persistent_frames_with_new_ephemeral_root(tmp_path : Path) -> None:
+	configuration = repr(dict(state_manager.get_state()))
+	code = '\n'.join(
+	[
+		'import numpy',
+		'from facefusion import frame_checkpoint, state_manager',
+		'state_manager.init()',
+		'state_manager.set_state(' + configuration + ')',
+		'with frame_checkpoint.session():',
+		'\tassert frame_checkpoint.write_frame(9, numpy.full((24, 32, 3), 91, dtype = numpy.uint8))',
+		'\tprint("committed", flush = True)',
+		'\tinput()'
+	])
+	process = subprocess.Popen([ sys.executable, '-c', code ], stdin = subprocess.PIPE, stdout = subprocess.PIPE, text = True)
+	try:
+		assert process.stdout.readline().strip() == 'committed'
+	finally:
+		process.kill()
+		process.communicate(timeout = 10)
+	assert process.returncode != 0
+	path = frame_checkpoint.get_frame_path(9)
+	content = path.read_bytes()
+	modified = path.stat().st_mtime_ns
+	state_manager.init_item('temp_path', str(tmp_path / 'new-pod-ephemeral'))
+	with frame_checkpoint.session():
+		assert numpy.array_equal(frame_checkpoint.read_frame(9), numpy.full((24, 32, 3), 91, dtype = numpy.uint8))
+		assert path.read_bytes() == content
+		assert path.stat().st_mtime_ns == modified
+		assert frame_checkpoint.finish() == 0
+	assert not path.exists()
+
+
+@pytest.mark.parametrize('invalidated', [ False, True ])
+def test_completed_steps_survive_failure_and_are_cleaned_after_retry(tmp_path : Path, invalidated : bool) -> None:
+	from facefusion.jobs import job_helper, job_manager, job_runner
+	from facefusion.vision import write_image
+
+	state_manager.init_item('jobs_path', str(tmp_path / 'jobs'))
+	assert job_manager.init_jobs(state_manager.get_jobs_path())
+	assert job_manager.create_job('resumable')
+	for index in range(2):
+		args = dict(state_manager.get_state())
+		args['output_path'] = str(tmp_path / (str(index) + '.png'))
+		assert job_manager.add_step('resumable', args)
+	assert job_manager.submit_job('resumable')
+	calls = []
+
+	def process(job_id : JobId, step_index : StepIndex, args : Args) -> ErrorCode:
+		calls.append(step_index)
+		if calls == [ 0, 1 ]:
+			return 1
+		return 0 if write_image(args['output_path'], numpy.zeros((24, 32, 3), dtype = numpy.uint8)) else 1
+
+	assert not job_runner.run_job('resumable', process)
+	args = job_manager.get_steps('resumable')[0]['args']
+	step_output = Path(job_helper.get_step_output_path('resumable', 0, str(args['output_path'])))
+	assert step_output.is_file()
+	assert Path(str(step_output) + '.resume.json').is_file()
+	if invalidated:
+		assert write_image(str(step_output), numpy.full((24, 32, 3), 255, dtype = numpy.uint8))
+	assert job_runner.retry_job('resumable', process)
+	assert calls == ([ 0, 1, 0, 1 ] if invalidated else [ 0, 1, 1 ])
+	assert not step_output.exists()
+	assert not Path(str(step_output) + '.resume.json').exists()
+	assert Path(str(args['output_path'])).is_file()
+
+
+def test_delete_job_cleans_checkpoints_without_deleting_inputs(tmp_path : Path) -> None:
+	from facefusion.jobs import job_manager
+
+	state_manager.init_item('jobs_path', str(tmp_path / 'jobs'))
+	assert job_manager.init_jobs(state_manager.get_jobs_path())
+	assert job_manager.create_job('discard')
+	assert job_manager.add_step('discard', dict(state_manager.get_state()))
+	with frame_checkpoint.job('discard'), frame_checkpoint.session():
+		assert frame_checkpoint.write_frame(0, numpy.zeros((24, 32, 3), dtype = numpy.uint8))
+		assert not job_manager.delete_job('discard')
+		assert job_manager.read_job_file('discard') is not None
+	assert job_manager.delete_job('discard')
+	assert not frame_checkpoint.get_directory().exists()
+	assert Path(state_manager.get_item('target_path')).is_file()
+
+
+def test_fingerprint_detects_same_size_change_with_restored_modification_time(tmp_path : Path) -> None:
+	import os
+
+	path = tmp_path / 'model.onnx'
+	path.write_bytes(b'first')
+	status = path.stat()
+	original = frame_checkpoint.hash_file(path)
+	path.write_bytes(b'other')
+	os.utime(path, ns = (status.st_atime_ns, status.st_mtime_ns))
+	assert frame_checkpoint.hash_file(path) != original

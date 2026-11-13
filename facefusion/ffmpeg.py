@@ -318,7 +318,7 @@ def merge_video(target_path : str, output_path : str, temp_video_fps : Fps, outp
 	temp_video_format = cast(VideoFormat, get_file_format(output_path))
 	temp_frames_pattern = get_temp_frames_pattern(state_manager.get_temp_path(), output_path, state_manager.get_item('temp_frame_format'), '%08d')
 	if frame_checkpoint.is_enabled():
-		temp_frames_pattern = str(frame_checkpoint.get_directory() / '%08d.png')
+		temp_frames_pattern = str(frame_checkpoint.get_frame_path(0).with_name('%08d' + frame_checkpoint.get_frame_path(0).suffix))
 
 	output_video_encoder = fix_video_encoder(temp_video_format, output_video_encoder)
 	commands = ffmpeg_builder.chain(

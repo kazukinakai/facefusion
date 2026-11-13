@@ -68,8 +68,12 @@ def process_memory_frame(frame_index : int, temp_video_resolution : Resolution, 
 		temp_vision_frame = temp_vision_frame[:, :, :3]
 
 	temp_vision_frame = numpy.ascontiguousarray(temp_vision_frame)
-	if frame_checkpoint.is_enabled() and not frame_checkpoint.write_frame(frame_index, temp_vision_frame):
-		raise OSError('Could not commit processed frame checkpoint')
+	if frame_checkpoint.is_enabled():
+		if not frame_checkpoint.write_frame(frame_index, temp_vision_frame):
+			raise OSError('Could not commit processed frame checkpoint')
+		temp_vision_frame = frame_checkpoint.read_frame(frame_index)
+		if temp_vision_frame is None:
+			raise OSError('Could not read committed frame checkpoint')
 	return temp_vision_frame
 
 
