@@ -29,11 +29,11 @@ def run_job_steps(job_id : JobId, process_step : ProcessStep) -> bool:
 		process_manager.start()
 
 		if run_steps(job_id, process_step) and job_id in job_manager.find_job_ids('queued') and finalize_steps(job_id):
-			clean_steps(job_id)
 			process_manager.end()
 			session_manager.join_session()
 			completed = job_manager.move_job_file(job_id, 'completed')
 			if completed:
+				clean_steps(job_id)
 				frame_checkpoint.finish_job(job_id)
 			return completed
 

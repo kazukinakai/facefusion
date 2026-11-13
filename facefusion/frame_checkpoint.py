@@ -15,7 +15,7 @@ import cv2
 import numpy
 
 from facefusion import logger, state_manager
-from facefusion.temp_helper import get_temp_directory_path
+from facefusion.session_context import resolve_local_id
 from facefusion.types import Args, ErrorCode, JobId, State, VisionFrame
 
 JOB_ID : ContextVar[Optional[JobId]] = ContextVar('CHECKPOINT_JOB_ID', default = None)
@@ -34,11 +34,20 @@ def is_enabled() -> bool:
 	return bool(state_manager.get_item('resume')) and state_manager.get_item('workflow_mode') == 'image-to-video'
 
 
+def get_root() -> Path:
+	resume_path = state_manager.get_item('resume_path')
+	if resume_path:
+		return Path(resume_path)
+	temp_path = Path(state_manager.get_temp_path())
+	if temp_path.name == resolve_local_id():
+		return temp_path.parent
+	return temp_path
+
+
 def get_directory() -> Path:
-	temp_path = state_manager.get_item('resume_path') or state_manager.get_temp_path()
 	identity = str(Path(state_manager.get_item('output_path')).resolve())
 	name = hashlib.sha256(identity.encode()).hexdigest()
-	return Path(temp_path) / 'facefusion-resume' / name / 'processed'
+	return get_root() / 'facefusion-resume' / name / 'processed'
 
 
 def hash_file(path : Path) -> str:
@@ -127,7 +136,7 @@ def job_session(job_id : JobId) -> Iterator[None]:
 	for step in job_manager.get_steps(job_id):
 		args = step.get('args')
 		if args.get('resume'):
-			root = Path(args.get('resume_path') or state_manager.get_item('resume_path') or state_manager.get_temp_path())
+			root = Path(args.get('resume_path')) if args.get('resume_path') else get_root()
 			identity = hashlib.sha256(job_id.encode()).hexdigest()
 			directories.add(root / 'facefusion-resume' / 'jobs' / identity / 'processed')
 	with ExitStack() as stack:
@@ -142,6 +151,7 @@ def session() -> Iterator[None]:
 		yield
 		return
 	directory = get_directory()
+	root = get_root()
 	with lock(directory):
 		signature = create_signature()
 		manifest_path = directory / 'signature'
@@ -155,7 +165,18 @@ def session() -> Iterator[None]:
 		write_atomic(manifest_path, signature.encode())
 		if JOB_ID.get():
 			write_atomic(directory / 'owner', str(JOB_ID.get()).encode())
-		yield
+		scratch = directory.parent / 'scratch'
+		if scratch.exists():
+			shutil.rmtree(scratch)
+		previous_temp_path = state_manager.get_item('temp_path')
+		previous_resume_path = state_manager.get_item('resume_path')
+		state_manager.set_item('resume_path', str(root))
+		state_manager.set_item('temp_path', str(scratch))
+		try:
+			yield
+		finally:
+			state_manager.set_item('temp_path', previous_temp_path)
+			state_manager.set_item('resume_path', previous_resume_path)
 
 
 def get_frame_path(frame_index : int) -> Path:
@@ -200,11 +221,7 @@ def write_frame(frame_index : int, frame : VisionFrame) -> bool:
 
 def finish() -> ErrorCode:
 	if is_enabled():
-		directory = get_directory().parent
-		shutil.rmtree(directory)
-		temp_directory = Path(get_temp_directory_path(state_manager.get_temp_path(), state_manager.get_item('output_path')))
-		if temp_directory != directory and temp_directory.exists():
-			shutil.rmtree(temp_directory)
+		shutil.rmtree(get_directory().parent)
 	return 0
 
 
@@ -223,9 +240,6 @@ def finish_job(job_id : JobId) -> bool:
 						owner_path = directory / 'owner'
 						if owner_path.is_file() and owner_path.read_text() == job_id:
 							shutil.rmtree(directory.parent)
-							temp_directory = Path(get_temp_directory_path(state_manager.get_temp_path(), args.get('output_path')))
-							if temp_directory.exists() and temp_directory != directory.parent:
-								shutil.rmtree(temp_directory)
 			except (OSError, UnicodeError) as error:
 				logger.warn(str(error), __name__)
 				return False

@@ -290,6 +290,9 @@ def test_abrupt_exit_reuses_persistent_frames_with_new_ephemeral_root(tmp_path :
 		'state_manager.set_state(' + configuration + ')',
 		'with frame_checkpoint.session():',
 		'\tassert frame_checkpoint.write_frame(9, numpy.full((24, 32, 3), 91, dtype = numpy.uint8))',
+		'\tpending = frame_checkpoint.get_directory().parent / "scratch" / "old-pod-partial.mp4"',
+		'\tpending.parent.mkdir(parents = True, exist_ok = True)',
+		'\tpending.write_bytes(b"incomplete")',
 		'\tprint("committed", flush = True)',
 		'\tinput()'
 	])
@@ -303,11 +306,14 @@ def test_abrupt_exit_reuses_persistent_frames_with_new_ephemeral_root(tmp_path :
 	path = frame_checkpoint.get_frame_path(9)
 	content = path.read_bytes()
 	modified = path.stat().st_mtime_ns
+	pending = path.parent.parent / 'scratch' / 'old-pod-partial.mp4'
+	assert pending.is_file()
 	state_manager.init_item('temp_path', str(tmp_path / 'new-pod-ephemeral'))
 	with frame_checkpoint.session():
 		assert numpy.array_equal(frame_checkpoint.read_frame(9), numpy.full((24, 32, 3), 91, dtype = numpy.uint8))
 		assert path.read_bytes() == content
 		assert path.stat().st_mtime_ns == modified
+		assert not pending.exists()
 		assert frame_checkpoint.finish() == 0
 	assert not path.exists()
 
@@ -373,3 +379,51 @@ def test_fingerprint_detects_same_size_change_with_restored_modification_time(tm
 	path.write_bytes(b'other')
 	os.utime(path, ns = (status.st_atime_ns, status.st_mtime_ns))
 	assert frame_checkpoint.hash_file(path) != original
+
+
+@pytest.mark.parametrize('api_owner', [ False, True ])
+def test_default_checkpoint_root_handles_pod_identity_without_merging_api_owners(api_owner : bool, tmp_path : Path, mocker : MockerFixture) -> None:
+	state_manager.init_item('resume_path', None)
+	local = mocker.patch.object(frame_checkpoint, 'resolve_local_id', return_value = 'pod-one')
+	temp = mocker.patch.object(state_manager, 'get_temp_path', return_value = str(tmp_path / ('user-one' if api_owner else 'pod-one')))
+	first = frame_checkpoint.get_directory()
+	local.return_value = 'pod-two'
+	temp.return_value = str(tmp_path / ('user-two' if api_owner else 'pod-two'))
+	second = frame_checkpoint.get_directory()
+	assert (first != second) if api_owner else (first == second)
+
+
+def test_completion_marker_failure_keeps_encoded_steps_for_retry(tmp_path : Path, mocker : MockerFixture) -> None:
+	import shutil
+
+	from facefusion.jobs import job_helper, job_manager, job_runner
+
+	target = tmp_path / 'video.mp4'
+	subprocess.run([ 'ffmpeg', '-nostdin', '-v', 'error', '-f', 'lavfi', '-i', 'color=size=32x24:rate=10', '-t', '0.2', '-c:v', 'libx264', str(target) ], check = True)
+	state_manager.init_item('target_path', str(target))
+	state_manager.init_item('jobs_path', str(tmp_path / 'jobs'))
+	assert job_manager.init_jobs(state_manager.get_jobs_path())
+	assert job_manager.create_job('completion-marker')
+	args = dict(state_manager.get_state())
+	args['output_path'] = str(tmp_path / 'output.mp4')
+	assert job_manager.add_step('completion-marker', args)
+	assert job_manager.submit_job('completion-marker')
+	calls = []
+
+	def process(job_id : JobId, step_index : StepIndex, step_args : Args) -> ErrorCode:
+		calls.append(step_index)
+		shutil.copy2(target, step_args['output_path'])
+		return 0
+
+	move = job_manager.move_job_file
+	marker = mocker.patch.object(job_manager, 'move_job_file', side_effect = lambda job_id, status: False if status == 'completed' else move(job_id, status))
+	assert not job_runner.run_job('completion-marker', process)
+	step_output = Path(job_helper.get_step_output_path('completion-marker', 0, str(args['output_path'])))
+	assert step_output.is_file()
+	assert Path(str(step_output) + '.resume.json').is_file()
+	marker.side_effect = move
+	assert job_runner.run_job('completion-marker', process)
+	assert calls == [ 0 ]
+	assert not step_output.exists()
+	assert not Path(str(step_output) + '.resume.json').exists()
+	assert Path(str(args['output_path'])).is_file()
