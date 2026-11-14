@@ -2,7 +2,7 @@ import os
 
 from facefusion import process_manager, session_manager, state_manager, store_manager
 from facefusion.ffmpeg import concat_video
-from facefusion.filesystem import are_images, are_videos, copy_file, create_directory, is_directory, is_file, move_directory, move_file, remove_directory, remove_file, resolve_file_paths
+from facefusion.filesystem import are_images, are_videos, copy_file, create_directory, get_file_size, is_directory, is_file, is_video, move_directory, move_file, remove_directory, remove_file, resolve_file_paths
 from facefusion.jobs import job_helper, job_manager
 from facefusion.types import JobId, JobOutputSet, ProcessStep, Step, StepIndex
 
@@ -19,12 +19,14 @@ def run_job(job_id : JobId, process_step : ProcessStep) -> bool:
 		process_manager.start()
 
 		if run_steps(job_id, process_step) and job_id in job_manager.find_job_ids('queued') and finalize_steps(job_id):
-			clean_steps(job_id)
 			process_manager.end()
 			session_manager.join_session()
-			return job_manager.move_job_file(job_id, 'completed')
+			completed = job_manager.move_job_file(job_id, 'completed')
+			if completed:
+				clean_steps(job_id)
+			return completed
 
-		clean_steps(job_id)
+		clean_steps(job_id, keep_videos = True)
 		process_manager.end()
 		session_manager.join_session()
 
@@ -71,11 +73,13 @@ def retry_jobs(process_step : ProcessStep, halt_on_error : bool) -> bool:
 
 def run_step(job_id : JobId, step_index : StepIndex, step : Step, process_step : ProcessStep) -> bool:
 	step_args = step.get('args')
+	output_path = step_args.get('output_path')
+	step_output_path = job_helper.get_step_output_path(job_id, step_index, output_path)
+
+	if step_args.get('resume') and is_video(step_output_path) and get_file_size(step_output_path):
+		return job_manager.set_step_status(job_id, step_index, 'completed')
 
 	if job_manager.set_step_status(job_id, step_index, 'started') and process_step(job_id, step_index, step_args) == 0:
-		output_path = step_args.get('output_path')
-		step_output_path = job_helper.get_step_output_path(job_id, step_index, output_path)
-
 		if is_directory(output_path):
 			return move_directory(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed')
 		return move_file(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed')
@@ -121,17 +125,22 @@ def finalize_steps(job_id : JobId) -> bool:
 	return True
 
 
-def clean_steps(job_id : JobId) -> bool:
-	output_set = collect_output_set(job_id)
+def clean_steps(job_id : JobId, keep_videos : bool = False) -> bool:
+	steps = job_manager.get_steps(job_id)
 
-	for temp_output_paths in output_set.values():
-		for temp_output_path in temp_output_paths:
-			if is_file(temp_output_path):
-				if not remove_file(temp_output_path):
-					return False
-			if is_directory(temp_output_path):
-				if not remove_directory(temp_output_path):
-					return False
+	for index, step in enumerate(steps):
+		step_args = step.get('args')
+		output_path = step_args.get('output_path')
+		step_output_path = job_helper.get_step_output_path(job_id, index, output_path)
+
+		if keep_videos and step_args.get('resume') and is_video(step_output_path) and get_file_size(step_output_path):
+			continue
+		if is_file(step_output_path):
+			if not remove_file(step_output_path):
+				return False
+		if is_directory(step_output_path):
+			if not remove_directory(step_output_path):
+				return False
 	return True
 
 

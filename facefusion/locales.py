@@ -133,6 +133,7 @@ LOCALES : Locales =\
 			'trim_frame_start': 'specify the starting frame of the target video',
 			'trim_frame_end': 'specify the ending frame of the target video',
 			'temp_frame_format': 'specify the temporary resources format',
+			'resume': 'reuse existing step videos when running or retrying a job',
 			'temp_pixel_format': 'specify the temporary pixel format',
 			'target_frame_amount': 'specify the amount of target frames forwarded to the processor',
 			'output_image_quality': 'specify the image quality which translates to the image compression',

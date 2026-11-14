@@ -463,7 +463,9 @@ def fix_audio_encoder(video_format : VideoFormat, audio_encoder : AudioEncoder) 
 		return 'aac'
 	if video_format in [ 'm4v', 'mpeg', 'wmv' ]:
 		return 'aac'
-	if video_format == 'mov' and audio_encoder in [ 'flac', 'libopus' ]:
+	if video_format == 'mov' and audio_encoder in [ 'flac', 'libopus', 'libvorbis' ]:
+		return 'aac'
+	if video_format == 'mp4' and audio_encoder == 'libvorbis':
 		return 'aac'
 	if video_format == 'mxf':
 		return 'pcm_s16le'

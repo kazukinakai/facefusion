@@ -82,6 +82,11 @@ def cancel_jobs(halt_on_error : bool) -> bool:
 
 
 def delete_job(job_id : JobId) -> bool:
+	from facefusion.jobs import job_runner
+
+	if any(step.get('args').get('resume') for step in get_steps(job_id)):
+		if not job_runner.clean_steps(job_id):
+			return False
 	return delete_job_file(job_id)
 
 
@@ -166,6 +171,10 @@ def insert_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> boo
 		step_index = count_step_total(job_id) - 1
 
 	if job and has_step(job_id, step_index):
+		from facefusion.jobs import job_runner
+
+		if any(step.get('args').get('resume') for step in job.get('steps')) and not job_runner.clean_steps(job_id):
+			return False
 		job.get('steps').insert(step_index,
 		{
 			'args': step_args,
@@ -182,6 +191,10 @@ def remove_step(job_id : JobId, step_index : StepIndex) -> bool:
 		step_index = count_step_total(job_id) - 1
 
 	if job and has_step(job_id, step_index):
+		from facefusion.jobs import job_runner
+
+		if any(step.get('args').get('resume') for step in job.get('steps')) and not job_runner.clean_steps(job_id):
+			return False
 		job.get('steps').pop(step_index)
 		return update_job_file(job_id, job)
 	return False
