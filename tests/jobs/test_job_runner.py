@@ -592,3 +592,23 @@ def test_resume_configuration_uses_native_ini_and_cli(configured : str, explicit
 	finally:
 		state_manager.set_item('config_path', old_config_path)
 		config.get_static_config_parser.cache_clear()
+
+
+def test_resume_cleanup_failure_does_not_reclassify_completed_job() -> None:
+	job_id = 'job-test-resume-cleanup'
+	args : Args =\
+	{
+		'target_path': get_test_example_file('target-240p.mp4'),
+		'output_path': get_test_output_path('cleanup.mp4'),
+		'resume': True
+	}
+	create_job(job_id)
+	add_step(job_id, args)
+	submit_job(job_id)
+	with patch('facefusion.jobs.job_runner.clean_steps', return_value = False):
+		assert run_job(job_id, process_step) is True
+	assert find_job_ids('completed') == [ job_id ]
+	step_output_path = job_helper.get_step_output_path(job_id, 0, args.get('output_path'))
+	assert os.path.isfile(step_output_path) is True
+	assert job_manager.delete_job(job_id) is True
+	assert os.path.isfile(step_output_path) is False

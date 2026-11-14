@@ -21,9 +21,10 @@ def run_job(job_id : JobId, process_step : ProcessStep) -> bool:
 		if run_steps(job_id, process_step) and job_id in job_manager.find_job_ids('queued') and finalize_steps(job_id):
 			process_manager.end()
 			session_manager.join_session()
-			if job_manager.move_job_file(job_id, 'completed'):
-				return clean_steps(job_id)
-			return False
+			completed = job_manager.move_job_file(job_id, 'completed')
+			if completed:
+				clean_steps(job_id)
+			return completed
 
 		clean_steps(job_id, keep_videos = True)
 		process_manager.end()
