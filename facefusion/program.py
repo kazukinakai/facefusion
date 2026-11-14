@@ -607,17 +607,6 @@ def create_frame_extraction_program() -> ArgumentParser:
 	capability_store.register_capability_set(
 		[
 			group_frame_extraction.add_argument(
-				'--resume-path',
-				help = translator.get('help.resume_path'),
-				default = config.get_str_value('frame_extraction', 'resume_path')
-			)
-		],
-		scopes = [ 'cli' ],
-		groups = [ 'frame_extraction' ]
-	)
-	capability_store.register_capability_set(
-		[
-			group_frame_extraction.add_argument(
 				'--resume',
 				help = translator.get('help.resume'),
 				action = 'store_true',

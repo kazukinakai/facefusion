@@ -6,7 +6,7 @@ import sys
 from time import time
 
 import facefusion.apis.core
-from facefusion import args_helper, benchmarker, cli_helper, content_analyser, content_store, face_store, frame_checkpoint, hash_helper, inference_manager, logger, process_manager, session_context, session_manager, state_manager, translator, video_manager
+from facefusion import args_helper, benchmarker, cli_helper, content_analyser, content_store, face_store, hash_helper, inference_manager, logger, process_manager, session_context, session_manager, state_manager, translator, video_manager
 from facefusion.args_helper import apply_args
 from facefusion.download import conditional_download_files
 from facefusion.exit_helper import hard_exit, signal_exit
@@ -320,8 +320,7 @@ def process_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> Er
 
 	try:
 		if common_pre_check() and processors_pre_check():
-			with frame_checkpoint.job(job_id):
-				return conditional_process()
+			return conditional_process()
 		return 2
 
 	finally:

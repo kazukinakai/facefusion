@@ -1,17 +1,15 @@
-import json
 import os
 from copy import copy
-from pathlib import Path
 from typing import List, Optional, cast
 
 import facefusion.choices
-from facefusion import frame_checkpoint, logger, state_manager
+from facefusion import state_manager
 from facefusion.filesystem import create_directory, get_file_name, is_directory, is_file, move_file, remove_directory, remove_file, resolve_file_pattern
 from facefusion.jobs.job_helper import get_step_output_path
-from facefusion.json import read_json
+from facefusion.json import read_json, write_json
 from facefusion.sanitizer import sanitize_job_id
 from facefusion.time_helper import get_current_date_time
-from facefusion.types import Args, Job, JobId, JobSet, JobStatus, Step, StepIndex, StepStatus
+from facefusion.types import Args, Content, Job, JobId, JobSet, JobStatus, Step, StepIndex, StepStatus
 
 
 def init_jobs(jobs_path : str) -> bool:
@@ -86,16 +84,10 @@ def cancel_jobs(halt_on_error : bool) -> bool:
 def delete_job(job_id : JobId) -> bool:
 	from facefusion.jobs import job_runner
 
-	try:
-		with frame_checkpoint.job_session(job_id):
-			if not frame_checkpoint.finish_job(job_id):
-				return False
-			if any(step.get('args').get('resume') for step in get_steps(job_id)) and not job_runner.clean_steps(job_id):
-				return False
-			return delete_job_file(job_id)
-	except OSError as error:
-		logger.warn(str(error), __name__)
-		return False
+	if any(step.get('args').get('resume') for step in get_steps(job_id)):
+		if not job_runner.clean_steps(job_id):
+			return False
+	return delete_job_file(job_id)
 
 
 def delete_jobs(halt_on_error : bool) -> bool:
@@ -179,6 +171,10 @@ def insert_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> boo
 		step_index = count_step_total(job_id) - 1
 
 	if job and has_step(job_id, step_index):
+		from facefusion.jobs import job_runner
+
+		if any(step.get('args').get('resume') for step in job.get('steps')) and not job_runner.clean_steps(job_id):
+			return False
 		job.get('steps').insert(step_index,
 		{
 			'args': step_args,
@@ -195,6 +191,10 @@ def remove_step(job_id : JobId, step_index : StepIndex) -> bool:
 		step_index = count_step_total(job_id) - 1
 
 	if job and has_step(job_id, step_index):
+		from facefusion.jobs import job_runner
+
+		if any(step.get('args').get('resume') for step in job.get('steps')) and not job_runner.clean_steps(job_id):
+			return False
 		job.get('steps').pop(step_index)
 		return update_job_file(job_id, job)
 	return False
@@ -251,16 +251,8 @@ def create_job_file(job_id : JobId, job : Job) -> bool:
 
 	if not is_file(job_path):
 		job_create_path = suggest_job_path(job_id, 'drafted')
-		return write_job_file(job_create_path, job)
+		return write_json(job_create_path, cast(Content, job))
 	return False
-
-
-def write_job_file(job_path : str, job : Job) -> bool:
-	try:
-		frame_checkpoint.write_atomic(Path(job_path), json.dumps(job, indent = 4).encode())
-		return True
-	except OSError:
-		return False
 
 
 def update_job_file(job_id : JobId, job : Job) -> bool:
@@ -268,7 +260,7 @@ def update_job_file(job_id : JobId, job : Job) -> bool:
 
 	if is_file(job_path):
 		job['date_updated'] = get_current_date_time().isoformat()
-		return write_job_file(job_path, job)
+		return write_json(job_path, cast(Content, job))
 	return False
 
 
