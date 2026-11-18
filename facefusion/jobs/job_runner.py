@@ -2,6 +2,7 @@ import os
 
 from facefusion import process_manager, session_manager, state_manager, store_manager
 from facefusion.ffmpeg import concat_video
+from facefusion.ffprobe import probe_video_entries
 from facefusion.filesystem import are_images, are_videos, copy_file, create_directory, is_directory, is_file, move_directory, move_file, remove_directory, remove_file, resolve_file_paths
 from facefusion.jobs import job_helper, job_manager
 from facefusion.types import JobId, JobOutputSet, ProcessStep, Step, StepIndex
@@ -76,7 +77,7 @@ def run_step(job_id : JobId, step_index : StepIndex, step : Step, process_step :
 	output_path = step_args.get('output_path')
 	step_output_path = job_helper.get_step_output_path(job_id, step_index, output_path)
 
-	if job_manager.has_completed_video(step, step_output_path):
+	if job_manager.has_completed_video(step, step_output_path) and probe_video_entries(step_output_path, [ 'codec_name' ]):
 		return True
 
 	if job_manager.set_step_status(job_id, step_index, 'started') and process_step(job_id, step_index, step_args) == 0:

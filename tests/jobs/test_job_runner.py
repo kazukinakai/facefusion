@@ -436,8 +436,8 @@ def video_step_args() -> Args:
 	}
 
 
-@pytest.mark.parametrize('resume', [ False, True ])
-def test_retry_retains_and_concatenates_step_videos(resume : bool, video_step_args : Args) -> None:
+@pytest.mark.parametrize(('resume', 'reuse'), [ (False, False), (True, True), ('false', False) ])
+def test_retry_retains_and_concatenates_step_videos(resume : bool | str, reuse : bool, video_step_args : Args) -> None:
 	job_id = 'job-test-resume'
 	args = video_step_args
 	args['resume'] = resume
@@ -455,9 +455,9 @@ def test_retry_retains_and_concatenates_step_videos(resume : bool, video_step_ar
 	submit_job(job_id)
 	assert run_job(job_id, interrupted_step) is False
 	step_output_path = job_helper.get_step_output_path(job_id, 0, args.get('output_path'))
-	assert os.path.isfile(step_output_path) is resume
+	assert os.path.isfile(step_output_path) is reuse
 	assert retry_job(job_id, interrupted_step) is True
-	assert calls == ([ 0, 1, 1 ] if resume else [ 0, 1, 0, 1 ])
+	assert calls == ([ 0, 1, 1 ] if reuse else [ 0, 1, 0, 1 ])
 	assert count_video_frame_total(args.get('output_path')) == count_video_frame_total(args.get('target_path')) * 2
 	assert os.path.isfile(step_output_path) is False
 	assert find_job_ids('completed') == [ job_id ]
@@ -467,6 +467,7 @@ def test_retry_retains_and_concatenates_step_videos(resume : bool, video_step_ar
 	('started', 'video', False),
 	('completed', 'missing', False),
 	('completed', 'empty', False),
+	('completed', 'unreadable', False),
 	('completed', 'image', False),
 	('completed', 'video', True)
 ])
@@ -482,6 +483,8 @@ def test_run_job_reuses_completed_video(status : StepStatus, output : str, reuse
 	step_output_path = job_helper.get_step_output_path(job_id, 0, video_step_args.get('output_path'))
 	if output == 'empty':
 		Path(step_output_path).touch()
+	if output == 'unreadable':
+		Path(step_output_path).write_bytes(b'incomplete')
 	if output in [ 'image', 'video' ]:
 		assert copy_file(video_step_args.get('target_path'), step_output_path)
 	with patch('tests.jobs.test_job_runner.process_step', wraps = process_step) as process_step_mock:

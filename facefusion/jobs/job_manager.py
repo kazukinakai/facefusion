@@ -81,13 +81,17 @@ def cancel_jobs(halt_on_error : bool) -> bool:
 	return False
 
 
+def can_resume_step(step : Step) -> bool:
+	return step.get('args').get('resume') is True and step.get('status') == 'completed'
+
+
 def has_completed_video(step : Step, step_output_path : str) -> bool:
-	return bool(step.get('args').get('resume') and step.get('status') == 'completed' and is_video(step_output_path) and get_file_size(step_output_path) > 0)
+	return can_resume_step(step) and is_video(step_output_path) and get_file_size(step_output_path) > 0
 
 
 def discard_step_videos(job_id : JobId, steps : List[Step], start_index : StepIndex = 0) -> bool:
 	for index, step in enumerate(steps[start_index:], start_index):
-		if step.get('args').get('resume') and step.get('status') == 'completed':
+		if can_resume_step(step):
 			step_output_path = get_step_output_path(job_id, index, step.get('args').get('output_path'))
 			if is_video(step_output_path) and not remove_file(step_output_path):
 				return False
@@ -237,7 +241,7 @@ def set_steps_status(job_id : JobId, step_status : StepStatus, retry : bool = Fa
 
 	if job:
 		for step in job.get('steps'):
-			if retry and step.get('args').get('resume') and step.get('status') == 'completed':
+			if retry and can_resume_step(step):
 				continue
 			step['status'] = step_status
 		return update_job_file(job_id, job)
