@@ -5,16 +5,30 @@ from typing import Deque, List
 
 import numpy
 
-from facefusion import logger, process_manager, state_manager, thread_helper, translator
+from facefusion import audio, content_analyser, logger, process_manager, state_manager, thread_helper, translator
 from facefusion.audio import create_empty_audio_frame, get_audio_frame, get_voice_frame
 from facefusion.clis import cli_progress
 from facefusion.common_helper import get_first
 from facefusion.face_selector import decode_face_selector_maps
+from facefusion.ffprobe import extract_static_video_metadata
 from facefusion.filesystem import filter_audio_paths, get_file_extension, has_audio, has_image, has_video
 from facefusion.processors.core import get_processors_modules
 from facefusion.temp_helper import clear_temp_directory, create_temp_directory, resolve_temp_frame_set
 from facefusion.types import AudioFrame, ErrorCode, VisionFrame, WorkflowMode
 from facefusion.vision import conditional_merge_vision_mask, detect_video_fps, extract_vision_mask, read_static_image, read_static_images, read_static_video_frame, resolve_extract_frame_index, resolve_target_frame_index, restrict_video_fps, restrict_video_range, select_video_frames, write_image
+
+
+def clear_input_caches(input_paths : List[str]) -> None:
+	if has_video(input_paths):
+		extract_static_video_metadata.cache_clear()
+		content_analyser.analyse_video.cache_clear()
+		read_static_video_frame.cache_clear()
+	if has_image(input_paths):
+		content_analyser.analyse_image.cache_clear()
+		read_static_image.cache_clear()
+	if has_audio(input_paths):
+		audio.read_static_audio.cache_clear()
+		audio.read_static_voice.cache_clear()
 
 
 def detect_workflow_mode() -> WorkflowMode:

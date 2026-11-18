@@ -1,10 +1,13 @@
 import os
+from typing import Dict, Optional
 
 from facefusion import process_manager, session_manager, state_manager, store_manager
 from facefusion.ffmpeg import concat_video
+from facefusion.ffprobe import probe_video_entries
 from facefusion.filesystem import are_images, are_videos, copy_file, create_directory, is_directory, is_file, move_directory, move_file, remove_directory, remove_file, resolve_file_paths
 from facefusion.jobs import job_helper, job_manager
-from facefusion.types import JobId, JobOutputSet, ProcessStep, Step, StepIndex
+from facefusion.types import Args, JobId, JobOutputSet, ProcessStep, Step, StepIndex, StepInputSet
+from facefusion.workflows.core import clear_input_caches
 
 
 def run_job(job_id : JobId, process_step : ProcessStep) -> bool:
@@ -17,14 +20,19 @@ def run_job(job_id : JobId, process_step : ProcessStep) -> bool:
 		state_manager.clone_state()
 
 		process_manager.start()
+		job_manager.clear_expired_step_videos(state_manager.get_jobs_path())
 
 		if run_steps(job_id, process_step) and job_id in job_manager.find_job_ids('queued') and finalize_steps(job_id):
-			clean_steps(job_id)
 			process_manager.end()
 			session_manager.join_session()
-			return job_manager.move_job_file(job_id, 'completed')
+			try:
+				completed = job_manager.move_job_file(job_id, 'completed')
+			except OSError:
+				completed = False
+			clean_steps(job_id, keep_completed_videos = not completed)
+			return completed
 
-		clean_steps(job_id)
+		clean_steps(job_id, keep_completed_videos = True)
 		process_manager.end()
 		session_manager.join_session()
 
@@ -51,7 +59,7 @@ def retry_job(job_id : JobId, process_step : ProcessStep) -> bool:
 	failed_job_ids = job_manager.find_job_ids('failed')
 
 	if job_id in failed_job_ids:
-		return job_manager.set_steps_status(job_id, 'queued') and job_manager.move_job_file(job_id, 'queued') and run_job(job_id, process_step)
+		return job_manager.set_steps_status(job_id, 'queued', retry = True) and job_manager.move_job_file(job_id, 'queued') and run_job(job_id, process_step)
 	return False
 
 
@@ -69,16 +77,50 @@ def retry_jobs(process_step : ProcessStep, halt_on_error : bool) -> bool:
 	return False
 
 
+def get_resume_inputs(step_args : Args) -> Optional[StepInputSet]:
+	resume_inputs : StepInputSet = {}
+
+	for input_path in job_helper.get_step_input_paths(step_args):
+		try:
+			input_stat = os.stat(input_path)
+			resume_inputs[input_path] = [ input_stat.st_size, input_stat.st_mtime_ns ]
+		except (FileNotFoundError, NotADirectoryError):
+			resume_inputs[input_path] = None
+		except OSError:
+			return None
+	return resume_inputs
+
+
+def has_matching_available_inputs(saved_inputs : Optional[StepInputSet], current_inputs : Optional[StepInputSet]) -> bool:
+	if saved_inputs is None or current_inputs is None or saved_inputs.keys() != current_inputs.keys():
+		return False
+
+	for input_path, input_stat in current_inputs.items():
+		if input_stat is not None and input_stat != saved_inputs[input_path]:
+			return False
+	return True
+
+
 def run_step(job_id : JobId, step_index : StepIndex, step : Step, process_step : ProcessStep) -> bool:
 	step_args = step.get('args')
+	output_path = step_args.get('output_path')
+	step_output_path = job_helper.get_step_output_path(job_id, step_index, output_path, step_args.get('resume'))
+	resume_inputs = get_resume_inputs(step_args) if step_args.get('resume') is True else None
 
-	if job_manager.set_step_status(job_id, step_index, 'started') and process_step(job_id, step_index, step_args) == 0:
-		output_path = step_args.get('output_path')
-		step_output_path = job_helper.get_step_output_path(job_id, step_index, output_path)
+	if job_manager.can_resume_step(step):
+		inputs_match = has_matching_available_inputs(step.get('resume_inputs'), resume_inputs)
+		if inputs_match and job_manager.has_completed_video(step, step_output_path) and probe_video_entries(step_output_path, [ 'codec_name' ]):
+			return True
+		if not inputs_match:
+			clear_input_caches(job_helper.get_step_input_paths(step_args))
 
+	if job_manager.set_step_status(job_id, step_index, 'started', step_output_path = step_output_path) and process_step(job_id, step_index, step_args) == 0:
+		if step_args.get('resume') is True and step_output_path and os.path.dirname(step_output_path) == job_helper.get_step_video_directory(job_id):
+			if not create_directory(os.path.dirname(step_output_path)):
+				return False
 		if is_directory(output_path):
 			return move_directory(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed')
-		return move_file(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed')
+		return move_file(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed', resume_inputs)
 	job_manager.set_step_status(job_id, step_index, 'failed')
 	return False
 
@@ -87,9 +129,24 @@ def run_steps(job_id : JobId, process_step : ProcessStep) -> bool:
 	steps = job_manager.get_steps(job_id)
 
 	if steps:
+		relocated_step_outputs : Dict[str, str] = {}
 		for index, step in enumerate(steps):
+			if job_manager.can_resume_step(step):
+				current_steps = job_manager.get_steps(job_id)
+				if index >= len(current_steps):
+					return False
+				step = current_steps[index]
+			step_args = step.get('args')
+			if relocated_step_outputs:
+				step = step.copy()
+				step['args'] = job_helper.resolve_step_input_paths(step_args, relocated_step_outputs)
 			if not run_step(job_id, index, step, process_step):
 				return False
+			if step_args.get('resume') is True and step_args.get('output_path'):
+				original_step_output_path = job_helper.get_step_output_path(job_id, index, step_args['output_path'])
+				retained_step_output_path = job_helper.get_step_output_path(job_id, index, step_args['output_path'], True)
+				if original_step_output_path != retained_step_output_path:
+					relocated_step_outputs[os.path.normcase(os.path.realpath(original_step_output_path))] = retained_step_output_path
 		return True
 	return False
 
@@ -121,8 +178,8 @@ def finalize_steps(job_id : JobId) -> bool:
 	return True
 
 
-def clean_steps(job_id : JobId) -> bool:
-	output_set = collect_output_set(job_id)
+def clean_steps(job_id : JobId, keep_completed_videos : bool = False) -> bool:
+	output_set = collect_output_set(job_id, keep_completed_videos)
 
 	for temp_output_paths in output_set.values():
 		for temp_output_path in temp_output_paths:
@@ -132,10 +189,13 @@ def clean_steps(job_id : JobId) -> bool:
 			if is_directory(temp_output_path):
 				if not remove_directory(temp_output_path):
 					return False
+	directory_path = job_helper.get_step_video_directory(job_id)
+	if is_directory(directory_path) and not os.listdir(directory_path):
+		return remove_directory(directory_path)
 	return True
 
 
-def collect_output_set(job_id : JobId) -> JobOutputSet:
+def collect_output_set(job_id : JobId, keep_completed_videos : bool = False) -> JobOutputSet:
 	steps = job_manager.get_steps(job_id)
 	job_output_set : JobOutputSet = {}
 
@@ -143,6 +203,8 @@ def collect_output_set(job_id : JobId) -> JobOutputSet:
 		output_path = step.get('args').get('output_path')
 
 		if output_path:
-			step_output_path = job_manager.get_step_output_path(job_id, index, output_path)
+			step_output_path = job_helper.get_step_output_path(job_id, index, output_path, step.get('args').get('resume'))
+			if keep_completed_videos and job_manager.has_completed_video(step, step_output_path):
+				continue
 			job_output_set.setdefault(output_path, []).append(step_output_path)
 	return job_output_set
