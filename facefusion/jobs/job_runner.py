@@ -19,12 +19,13 @@ def run_job(job_id : JobId, process_step : ProcessStep) -> bool:
 		process_manager.start()
 
 		if run_steps(job_id, process_step) and job_id in job_manager.find_job_ids('queued') and finalize_steps(job_id):
-			clean_steps(job_id)
 			process_manager.end()
 			session_manager.join_session()
-			return job_manager.move_job_file(job_id, 'completed')
+			completed = job_manager.move_job_file(job_id, 'completed')
+			clean_steps(job_id, keep_completed_videos = not completed)
+			return completed
 
-		clean_steps(job_id)
+		clean_steps(job_id, keep_completed_videos = True)
 		process_manager.end()
 		session_manager.join_session()
 
@@ -51,7 +52,7 @@ def retry_job(job_id : JobId, process_step : ProcessStep) -> bool:
 	failed_job_ids = job_manager.find_job_ids('failed')
 
 	if job_id in failed_job_ids:
-		return job_manager.set_steps_status(job_id, 'queued') and job_manager.move_job_file(job_id, 'queued') and run_job(job_id, process_step)
+		return job_manager.set_steps_status(job_id, 'queued', retry = True) and job_manager.move_job_file(job_id, 'queued') and run_job(job_id, process_step)
 	return False
 
 
@@ -72,10 +73,13 @@ def retry_jobs(process_step : ProcessStep, halt_on_error : bool) -> bool:
 def run_step(job_id : JobId, step_index : StepIndex, step : Step, process_step : ProcessStep) -> bool:
 	step_args = step.get('args')
 
-	if job_manager.set_step_status(job_id, step_index, 'started') and process_step(job_id, step_index, step_args) == 0:
-		output_path = step_args.get('output_path')
-		step_output_path = job_helper.get_step_output_path(job_id, step_index, output_path)
+	output_path = step_args.get('output_path')
+	step_output_path = job_helper.get_step_output_path(job_id, step_index, output_path)
 
+	if job_manager.has_completed_video(step, step_output_path):
+		return True
+
+	if job_manager.set_step_status(job_id, step_index, 'started') and process_step(job_id, step_index, step_args) == 0:
 		if is_directory(output_path):
 			return move_directory(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed')
 		return move_file(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed')
@@ -121,8 +125,8 @@ def finalize_steps(job_id : JobId) -> bool:
 	return True
 
 
-def clean_steps(job_id : JobId) -> bool:
-	output_set = collect_output_set(job_id)
+def clean_steps(job_id : JobId, keep_completed_videos : bool = False) -> bool:
+	output_set = collect_output_set(job_id, keep_completed_videos)
 
 	for temp_output_paths in output_set.values():
 		for temp_output_path in temp_output_paths:
@@ -135,7 +139,7 @@ def clean_steps(job_id : JobId) -> bool:
 	return True
 
 
-def collect_output_set(job_id : JobId) -> JobOutputSet:
+def collect_output_set(job_id : JobId, keep_completed_videos : bool = False) -> JobOutputSet:
 	steps = job_manager.get_steps(job_id)
 	job_output_set : JobOutputSet = {}
 
@@ -144,5 +148,7 @@ def collect_output_set(job_id : JobId) -> JobOutputSet:
 
 		if output_path:
 			step_output_path = job_manager.get_step_output_path(job_id, index, output_path)
+			if keep_completed_videos and job_manager.has_completed_video(step, step_output_path):
+				continue
 			job_output_set.setdefault(output_path, []).append(step_output_path)
 	return job_output_set

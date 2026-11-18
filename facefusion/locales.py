@@ -148,6 +148,7 @@ LOCALES : Locales =\
 			'output_video_fps': 'specify the video fps based on the target video',
 			'workflow_mode': 'choose the workflow mode',
 			'workflow_strategy': 'process the temporary frames in memory or on disk',
+			'resume': 'reuse existing step videos when running or retrying a job',
 			'processors': 'load a single or multiple processors (choices: {choices}, ...)',
 			'background-remover-model': 'choose the model responsible for removing the background',
 			'background-remover-color': 'apply red, green blue and alpha values of the background',

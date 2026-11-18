@@ -4,7 +4,7 @@ from typing import List, Optional, cast
 
 import facefusion.choices
 from facefusion import state_manager
-from facefusion.filesystem import create_directory, get_file_name, is_directory, is_file, move_file, remove_directory, remove_file, resolve_file_pattern
+from facefusion.filesystem import create_directory, get_file_name, get_file_size, is_directory, is_file, is_video, move_file, remove_directory, remove_file, resolve_file_pattern
 from facefusion.jobs.job_helper import get_step_output_path
 from facefusion.json import read_json, write_json
 from facefusion.sanitizer import sanitize_job_id
@@ -63,7 +63,7 @@ def cancel_job(job_id : JobId) -> bool:
 	queued_job_ids = find_job_ids('queued')
 
 	if job_id in queued_job_ids:
-		return set_steps_status(job_id, 'drafted') and move_job_file(job_id, 'drafted')
+		return discard_step_videos(job_id, get_steps(job_id)) and set_steps_status(job_id, 'drafted') and move_job_file(job_id, 'drafted')
 	return False
 
 
@@ -81,8 +81,22 @@ def cancel_jobs(halt_on_error : bool) -> bool:
 	return False
 
 
+def has_completed_video(step : Step, step_output_path : str) -> bool:
+	return bool(step.get('args').get('resume') and step.get('status') == 'completed' and is_video(step_output_path) and get_file_size(step_output_path) > 0)
+
+
+def discard_step_videos(job_id : JobId, steps : List[Step], start_index : StepIndex = 0) -> bool:
+	for index, step in enumerate(steps[start_index:], start_index):
+		if step.get('args').get('resume') and step.get('status') == 'completed':
+			step_output_path = get_step_output_path(job_id, index, step.get('args').get('output_path'))
+			if is_video(step_output_path) and not remove_file(step_output_path):
+				return False
+			step['status'] = 'drafted'
+	return True
+
+
 def delete_job(job_id : JobId) -> bool:
-	return delete_job_file(job_id)
+	return discard_step_videos(job_id, get_steps(job_id)) and delete_job_file(job_id)
 
 
 def delete_jobs(halt_on_error : bool) -> bool:
@@ -165,7 +179,7 @@ def insert_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> boo
 	if step_index and step_index < 0:
 		step_index = count_step_total(job_id) - 1
 
-	if job and has_step(job_id, step_index):
+	if job and has_step(job_id, step_index) and discard_step_videos(job_id, job.get('steps'), step_index):
 		job.get('steps').insert(step_index,
 		{
 			'args': step_args,
@@ -181,7 +195,7 @@ def remove_step(job_id : JobId, step_index : StepIndex) -> bool:
 	if step_index and step_index < 0:
 		step_index = count_step_total(job_id) - 1
 
-	if job and has_step(job_id, step_index):
+	if job and has_step(job_id, step_index) and discard_step_videos(job_id, job.get('steps'), step_index):
 		job.get('steps').pop(step_index)
 		return update_job_file(job_id, job)
 	return False
@@ -218,11 +232,13 @@ def set_step_status(job_id : JobId, step_index : StepIndex, step_status : StepSt
 	return False
 
 
-def set_steps_status(job_id : JobId, step_status : StepStatus) -> bool:
+def set_steps_status(job_id : JobId, step_status : StepStatus, retry : bool = False) -> bool:
 	job = read_job_file(job_id)
 
 	if job:
 		for step in job.get('steps'):
+			if retry and step.get('args').get('resume') and step.get('status') == 'completed':
+				continue
 			step['status'] = step_status
 		return update_job_file(job_id, job)
 	return False
