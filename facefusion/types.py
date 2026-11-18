@@ -569,11 +569,13 @@ CorsOrigin : TypeAlias = str
 InferencePool : TypeAlias = Dict[str, InferenceSession]
 
 StepIndex : TypeAlias = int
+StepInputSet : TypeAlias = Dict[str, Optional[List[int]]]
 StepStatus = Literal['drafted', 'queued', 'started', 'completed', 'failed']
 Step = TypedDict('Step',
 {
 	'args' : Args,
-	'status' : StepStatus
+	'status' : StepStatus,
+	'resume_inputs' : NotRequired[StepInputSet]
 })
 
 JobId : TypeAlias = str
@@ -651,6 +653,7 @@ StateKey = Literal\
 	'output_video_fps',
 	'workflow_mode',
 	'workflow_strategy',
+	'resume',
 	'processors',
 	'execution_device_ids',
 	'execution_providers',
@@ -728,6 +731,7 @@ State = TypedDict('State',
 	'output_audio_fps' : float,
 	'workflow_mode' : WorkflowMode,
 	'workflow_strategy' : WorkflowStrategy,
+	'resume' : bool,
 	'processors' : List[str],
 	'execution_device_ids' : List[int],
 	'execution_providers' : List[ExecutionProvider],

@@ -69,6 +69,18 @@ def create_workflow_program() -> ArgumentParser:
 		scopes = [ 'api', 'cli' ],
 		groups = [ 'workflow' ]
 	)
+	capability_store.register_capability_set(
+		[
+			group_workflow.add_argument(
+				'--resume',
+				help = translator.get('help.resume'),
+				action = 'store_true',
+				default = config.get_bool_value('workflow', 'resume', 'False')
+			)
+		],
+		scopes = [ 'api', 'cli' ],
+		groups = [ 'workflow' ]
+	)
 
 	return program
 
