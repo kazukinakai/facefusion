@@ -1,15 +1,35 @@
 import os
 from copy import copy
+from datetime import timedelta
+from time import time
 from typing import List, Optional, cast
 
 import facefusion.choices
-from facefusion import state_manager
-from facefusion.filesystem import create_directory, get_file_name, is_directory, is_file, move_file, remove_directory, remove_file, resolve_file_pattern
-from facefusion.jobs.job_helper import get_step_output_path
+from facefusion import logger, state_manager, translator
+from facefusion.filesystem import create_directory, get_file_name, get_file_size, is_directory, is_file, is_video, move_file, remove_directory, remove_file, resolve_file_paths, resolve_file_pattern
+from facefusion.jobs.job_helper import get_step_output_path, get_step_video_directory
 from facefusion.json import read_json, write_json
 from facefusion.sanitizer import sanitize_job_id
 from facefusion.time_helper import get_current_date_time
-from facefusion.types import Args, Content, Job, JobId, JobSet, JobStatus, Step, StepIndex, StepStatus
+from facefusion.types import Args, Content, Job, JobId, JobSet, JobStatus, Step, StepIndex, StepInputSet, StepStatus
+
+
+def clear_expired_step_videos(jobs_path : str) -> None:
+	cache_path = os.path.join(jobs_path, 'step-videos')
+	if os.path.islink(jobs_path) or os.path.islink(cache_path):
+		return
+	expiration = time() - timedelta(days = 7).total_seconds()
+	try:
+		directory_paths = resolve_file_paths(cache_path)
+	except OSError:
+		return
+	for directory_path in directory_paths:
+		try:
+			if not os.path.islink(directory_path) and is_directory(directory_path) and os.path.getmtime(directory_path) < expiration:
+				if remove_directory(directory_path):
+					logger.info(translator.get('step_videos_expired').format(job_id = os.path.basename(directory_path)), __name__)
+		except OSError:
+			continue
 
 
 def init_jobs(jobs_path : str) -> bool:
@@ -17,6 +37,7 @@ def init_jobs(jobs_path : str) -> bool:
 
 	for job_status_path in job_status_paths:
 		create_directory(job_status_path)
+	clear_expired_step_videos(jobs_path)
 	return all(is_directory(status_path) for status_path in job_status_paths)
 
 
@@ -62,8 +83,10 @@ def submit_jobs(halt_on_error : bool) -> bool:
 def cancel_job(job_id : JobId) -> bool:
 	queued_job_ids = find_job_ids('queued')
 
-	if job_id in queued_job_ids:
-		return set_steps_status(job_id, 'drafted') and move_job_file(job_id, 'drafted')
+	if job_id in queued_job_ids and set_steps_status(job_id, 'drafted') and move_job_file(job_id, 'drafted'):
+		if not clear_job_videos(job_id):
+			logger.warn(translator.get('step_videos_not_removed').format(job_id = job_id), __name__)
+		return True
 	return False
 
 
@@ -81,8 +104,31 @@ def cancel_jobs(halt_on_error : bool) -> bool:
 	return False
 
 
+def can_resume_step(step : Step) -> bool:
+	return step.get('args').get('resume') is True and step.get('status') == 'completed'
+
+
+def has_completed_video(step : Step, step_output_path : str) -> bool:
+	return can_resume_step(step) and is_video(step_output_path) and get_file_size(step_output_path) > 0
+
+
+def discard_step_videos(job_id : JobId, steps : List[Step], start_index : StepIndex = 0) -> bool:
+	for index, step in enumerate(steps[start_index:], start_index):
+		step_args = step.get('args')
+		if step_args.get('resume') is True:
+			video_path = get_step_output_path(job_id, index, step_args.get('output_path'), True)
+			if is_video(video_path) and not remove_file(video_path):
+				return False
+	return True
+
+
+def clear_job_videos(job_id : JobId) -> bool:
+	directory_path = get_step_video_directory(job_id)
+	return not is_directory(directory_path) or remove_directory(directory_path)
+
+
 def delete_job(job_id : JobId) -> bool:
-	return delete_job_file(job_id)
+	return bool(job_id) and clear_job_videos(job_id) and delete_job_file(job_id)
 
 
 def delete_jobs(halt_on_error : bool) -> bool:
@@ -153,9 +199,16 @@ def remix_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> bool
 
 	if has_step(job_id, step_index):
 		output_path = steps[step_index].get('args').get('output_path')
-		step_args['target_path'] = get_step_output_path(job_id, step_index, output_path)
+		step_args['target_path'] = get_step_output_path(job_id, step_index, output_path, steps[step_index].get('args').get('resume'))
 		return add_step(job_id, step_args)
 	return False
+
+
+def invalidate_step_indices(steps : List[Step]) -> None:
+	for step in steps:
+		if can_resume_step(step):
+			step['status'] = 'drafted'
+			step.pop('resume_inputs', None)
 
 
 def insert_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> bool:
@@ -165,7 +218,8 @@ def insert_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> boo
 	if step_index and step_index < 0:
 		step_index = count_step_total(job_id) - 1
 
-	if job and has_step(job_id, step_index):
+	if job and has_step(job_id, step_index) and discard_step_videos(job_id, job.get('steps'), step_index):
+		invalidate_step_indices(job.get('steps')[step_index:])
 		job.get('steps').insert(step_index,
 		{
 			'args': step_args,
@@ -181,7 +235,8 @@ def remove_step(job_id : JobId, step_index : StepIndex) -> bool:
 	if step_index and step_index < 0:
 		step_index = count_step_total(job_id) - 1
 
-	if job and has_step(job_id, step_index):
+	if job and has_step(job_id, step_index) and discard_step_videos(job_id, job.get('steps'), step_index):
+		invalidate_step_indices(job.get('steps')[step_index:])
 		job.get('steps').pop(step_index)
 		return update_job_file(job_id, job)
 	return False
@@ -207,22 +262,34 @@ def has_step_status(job_id : JobId, step_status : StepStatus) -> bool:
 	return any(step.get('status') == step_status for step in get_steps(job_id))
 
 
-def set_step_status(job_id : JobId, step_index : StepIndex, step_status : StepStatus) -> bool:
+def set_step_status(job_id : JobId, step_index : StepIndex, step_status : StepStatus, resume_inputs : Optional[StepInputSet] = None, step_output_path : Optional[str] = None) -> bool:
 	job = read_job_file(job_id)
 
 	if job:
 		steps = job.get('steps')
-		if has_step(job_id, step_index):
-			steps[step_index]['status'] = step_status
+		if step_index in range(len(steps)):
+			step = steps[step_index]
+			step['status'] = step_status
+			if resume_inputs is not None:
+				step['resume_inputs'] = resume_inputs
+			else:
+				step.pop('resume_inputs', None)
+			if step_status == 'started' and step_output_path:
+				step_output_path = os.path.normcase(os.path.realpath(step_output_path))
+				for later_step in steps[step_index + 1:]:
+					if 'resume_inputs' in later_step and any(os.path.normcase(os.path.realpath(input_path)) == step_output_path for input_path in later_step['resume_inputs']):
+						later_step.pop('resume_inputs', None)
 			return update_job_file(job_id, job)
 	return False
 
 
-def set_steps_status(job_id : JobId, step_status : StepStatus) -> bool:
+def set_steps_status(job_id : JobId, step_status : StepStatus, retry : bool = False) -> bool:
 	job = read_job_file(job_id)
 
 	if job:
 		for step in job.get('steps'):
+			if retry and can_resume_step(step):
+				continue
 			step['status'] = step_status
 		return update_job_file(job_id, job)
 	return False
