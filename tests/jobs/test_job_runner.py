@@ -1,14 +1,19 @@
 import os
+from copy import deepcopy
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from facefusion import ffmpeg, ffmpeg_builder, process_manager, session_context, session_manager, state_manager
+from facefusion import capability_store, config, ffmpeg, ffmpeg_builder, process_manager, session_context, session_manager, state_manager
 from facefusion.download import conditional_download
 from facefusion.filesystem import copy_file, create_directory, get_file_extension
+from facefusion.jobs import job_helper, job_manager
 from facefusion.jobs.job_manager import add_step, clear_jobs, create_job, find_job_ids, init_jobs, move_job_file, submit_job, submit_jobs
 from facefusion.jobs.job_runner import clean_steps, collect_output_set, finalize_steps, retry_job, retry_jobs, run_job, run_jobs, run_steps
-from facefusion.types import Args, ErrorCode, JobId, StepIndex
+from facefusion.program import create_frame_extraction_program
+from facefusion.types import Args, ErrorCode, JobId, StepIndex, StepStatus
+from facefusion.vision import count_video_frame_total
 from tests.assert_helper import get_test_example_file, get_test_examples_directory, get_test_jobs_directory, get_test_output_path, is_test_output_file, is_test_output_sequence, prepare_test_output_directory
 
 
@@ -422,3 +427,188 @@ def test_collect_output_set() -> None:
 	}
 
 	assert collect_output_set('job-test-collect-output-set') == output_set
+
+
+@pytest.mark.parametrize('resume', [ False, True ])
+def test_retry_retains_and_concatenates_step_videos(resume : bool) -> None:
+	job_id = 'job-test-resume'
+	args : Args =\
+	{
+		'target_path': get_test_example_file('target-240p.mp4'),
+		'output_path': get_test_output_path('resumed.mp4'),
+		'resume': resume
+	}
+	calls = []
+
+	def interrupted_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> ErrorCode:
+		calls.append(step_index)
+		if calls == [ 0, 1 ]:
+			return 1
+		return process_step(job_id, step_index, step_args)
+
+	create_job(job_id)
+	add_step(job_id, args)
+	add_step(job_id, args)
+	submit_job(job_id)
+	assert run_job(job_id, interrupted_step) is False
+	step_output_path = job_helper.get_step_output_path(job_id, 0, args.get('output_path'))
+	assert os.path.isfile(step_output_path) is resume
+	assert retry_job(job_id, interrupted_step) is True
+	assert calls == ([ 0, 1, 1 ] if resume else [ 0, 1, 0, 1 ])
+	assert count_video_frame_total(args.get('output_path')) == count_video_frame_total(args.get('target_path')) * 2
+	assert os.path.isfile(step_output_path) is False
+	assert find_job_ids('completed') == [ job_id ]
+
+
+@pytest.mark.parametrize('missing', [ False, True ])
+def test_resume_reruns_missing_or_empty_step_video(missing : bool) -> None:
+	job_id = 'job-test-resume-missing'
+	args : Args =\
+	{
+		'target_path': get_test_example_file('target-240p.mp4'),
+		'output_path': get_test_output_path('missing.mp4'),
+		'resume': True
+	}
+	create_job(job_id)
+	add_step(job_id, args)
+	submit_job(job_id)
+	job_manager.set_step_status(job_id, 0, 'completed')
+	step_output_path = job_helper.get_step_output_path(job_id, 0, args.get('output_path'))
+	if not missing:
+		Path(step_output_path).touch()
+	with patch('tests.jobs.test_job_runner.process_step', wraps = process_step) as process_step_mock:
+		assert run_job(job_id, process_step_mock) is True
+	assert process_step_mock.call_count == 1
+
+
+@pytest.mark.parametrize('status', [ 'queued', 'started', 'completed' ])
+def test_resume_reuses_video_after_interrupted_status_write(status : StepStatus) -> None:
+	job_id = 'job-test-resume-status'
+	args : Args =\
+	{
+		'target_path': get_test_example_file('target-240p.mp4'),
+		'output_path': get_test_output_path('status.mp4'),
+		'resume': True
+	}
+	create_job(job_id)
+	add_step(job_id, args)
+	submit_job(job_id)
+	job = job_manager.read_job_file(job_id)
+	job['steps'][0]['status'] = status
+	assert job_manager.update_job_file(job_id, job) is True
+	step_output_path = job_helper.get_step_output_path(job_id, 0, args.get('output_path'))
+	assert copy_file(args.get('target_path'), step_output_path) is True
+	with patch('tests.jobs.test_job_runner.process_step', wraps = process_step) as process_step_mock:
+		assert run_job(job_id, process_step_mock) is True
+	assert process_step_mock.call_count == 0
+
+
+@pytest.mark.parametrize('failure', [ 'concat', 'completion' ])
+def test_resume_retains_videos_until_job_completion(failure : str) -> None:
+	job_id = 'job-test-resume-finalize'
+	args : Args =\
+	{
+		'target_path': get_test_example_file('target-240p.mp4'),
+		'output_path': get_test_output_path('finalize.mp4'),
+		'resume': True
+	}
+	create_job(job_id)
+	add_step(job_id, args)
+	submit_job(job_id)
+	step_output_path = job_helper.get_step_output_path(job_id, 0, args.get('output_path'))
+	if failure == 'concat':
+		with patch('facefusion.jobs.job_runner.concat_video', return_value = False):
+			assert run_job(job_id, process_step) is False
+	else:
+		with patch('facefusion.jobs.job_manager.move_job_file', return_value = False):
+			assert run_job(job_id, process_step) is False
+	assert os.path.isfile(step_output_path) is True
+	with patch('tests.jobs.test_job_runner.process_step', wraps = process_step) as process_step_mock:
+		if failure == 'concat':
+			assert retry_job(job_id, process_step_mock) is True
+		else:
+			assert run_job(job_id, process_step_mock) is True
+	assert process_step_mock.call_count == 0
+	assert os.path.isfile(step_output_path) is False
+
+
+@pytest.mark.parametrize('operation', [ 'delete', 'insert', 'remove' ])
+def test_resume_cleans_videos_on_job_edit_or_deletion(operation : str) -> None:
+	job_id = 'job-test-resume-edit'
+	args : Args =\
+	{
+		'target_path': get_test_example_file('target-240p.mp4'),
+		'output_path': get_test_output_path('edit.mp4'),
+		'resume': True
+	}
+	create_job(job_id)
+	add_step(job_id, args)
+	step_output_path = job_helper.get_step_output_path(job_id, 0, args.get('output_path'))
+	other_step_path = job_helper.get_step_output_path('other-job', 0, args.get('output_path'))
+	assert copy_file(args.get('target_path'), step_output_path) is True
+	assert copy_file(args.get('target_path'), other_step_path) is True
+	if operation == 'delete':
+		assert job_manager.delete_job(job_id) is True
+	if operation == 'insert':
+		assert job_manager.insert_step(job_id, 0, args) is True
+	if operation == 'remove':
+		assert job_manager.remove_step(job_id, 0) is True
+	assert os.path.isfile(step_output_path) is False
+	assert os.path.isfile(other_step_path) is True
+
+
+def test_resume_does_not_reuse_image_step_outputs() -> None:
+	job_id = 'job-test-resume-image'
+	args : Args =\
+	{
+		'target_path': get_test_example_file('target-240p.jpg'),
+		'output_path': get_test_output_path('image.jpg'),
+		'resume': True
+	}
+	create_job(job_id)
+	add_step(job_id, args)
+	submit_job(job_id)
+	step_output_path = job_helper.get_step_output_path(job_id, 0, args.get('output_path'))
+	assert copy_file(args.get('target_path'), step_output_path) is True
+	with patch('tests.jobs.test_job_runner.process_step', wraps = process_step) as process_step_mock:
+		assert run_job(job_id, process_step_mock) is True
+	assert process_step_mock.call_count == 1
+
+
+@pytest.mark.parametrize(('configured', 'explicit', 'expected'), [ ('', False, False), ('false', False, False), ('true', False, True), ('false', True, True) ])
+def test_resume_configuration_uses_native_ini_and_cli(configured : str, explicit : bool, expected : bool, tmp_path : Path) -> None:
+	config_path = tmp_path / 'resume.ini'
+	config_path.write_text('[frame_extraction]\nresume = ' + configured + '\n')
+	old_config_path = state_manager.get_item('config_path')
+	state_manager.set_item('config_path', str(config_path))
+	config.get_static_config_parser.cache_clear()
+	try:
+		with patch.dict(capability_store.CAPABILITY_STORE, deepcopy(capability_store.CAPABILITY_STORE)):
+			program = create_frame_extraction_program()
+			args = vars(program.parse_args([ '--resume' ] if explicit else []))
+			assert args.get('resume') is expected
+			assert 'resume' in capability_store.get_api_arguments()
+			assert 'resume' in capability_store.get_cli_arguments()
+	finally:
+		state_manager.set_item('config_path', old_config_path)
+		config.get_static_config_parser.cache_clear()
+
+
+def test_resume_cleanup_failure_does_not_reclassify_completed_job() -> None:
+	job_id = 'job-test-resume-cleanup'
+	args : Args =\
+	{
+		'target_path': get_test_example_file('target-240p.mp4'),
+		'output_path': get_test_output_path('cleanup.mp4'),
+		'resume': True
+	}
+	create_job(job_id)
+	add_step(job_id, args)
+	submit_job(job_id)
+	with patch('facefusion.jobs.job_runner.clean_steps', return_value = False):
+		assert run_job(job_id, process_step) is True
+	assert find_job_ids('completed') == [ job_id ]
+	step_output_path = job_helper.get_step_output_path(job_id, 0, args.get('output_path'))
+	assert os.path.isfile(step_output_path) is True
+	assert job_manager.delete_job(job_id) is True
+	assert os.path.isfile(step_output_path) is False

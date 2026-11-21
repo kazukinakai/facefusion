@@ -207,7 +207,21 @@ ErrorCode = Literal[0, 1, 2, 3, 4]
 LogLevel = Literal['error', 'warn', 'info', 'debug']
 LogLevelSet : TypeAlias = Dict[LogLevel, int]
 
-ProgressAction = Literal['color_active', 'color_neutral', 'cursor_start', 'erase_line', 'reset']
+LogColor = Literal['grey', 'red', 'reset', 'white', 'yellow']
+LogCharacterSet : TypeAlias = Dict[LogColor, str]
+LogGroup = TypedDict('LogGroup',
+{
+	'label' : str,
+	'color' : LogColor
+})
+LogLine : TypeAlias = List[str]
+LogExtra = TypedDict('LogExtra',
+{
+	'module_names' : List[str],
+	'log_group' : LogGroup
+})
+
+ProgressAction = Literal['cursor_start', 'erase_line']
 ProgressActionSet : TypeAlias = Dict[ProgressAction, str]
 ProgressUnit = Literal['percent', 'frame', 'download']
 Progress = TypedDict('Progress',
@@ -651,6 +665,7 @@ StateKey = Literal\
 	'output_video_fps',
 	'workflow_mode',
 	'workflow_strategy',
+	'resume',
 	'processors',
 	'execution_device_ids',
 	'execution_providers',
@@ -728,6 +743,7 @@ State = TypedDict('State',
 	'output_audio_fps' : float,
 	'workflow_mode' : WorkflowMode,
 	'workflow_strategy' : WorkflowStrategy,
+	'resume' : bool,
 	'processors' : List[str],
 	'execution_device_ids' : List[int],
 	'execution_providers' : List[ExecutionProvider],

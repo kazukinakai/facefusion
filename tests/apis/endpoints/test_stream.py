@@ -6,7 +6,7 @@ import pytest
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from facefusion import metadata, rtc, rtc_manager, session_context, session_manager, state_manager
+from facefusion import metadata, process_manager, rtc, rtc_manager, session_context, session_manager, state_manager
 from facefusion.apis import asset_store
 from facefusion.apis.core import create_api, pre_check
 from facefusion.download import conditional_download
@@ -96,6 +96,16 @@ def test_stream_image(test_client : TestClient) -> None:
 
 		assert create_hash(output_buffer) == '0142782f'
 
+		test_client.post('/assets?type=source', headers =
+		{
+			'Authorization': 'Bearer ' + access_token
+		}, files =
+		[
+			('file', ('source.jpg', source_content, 'image/jpeg'))
+		])
+		websocket.send_bytes(source_content)
+		websocket.receive_bytes()
+
 		with pytest.raises(WebSocketDisconnect) as stream_exception:
 			test_client.websocket_connect('/stream', subprotocols =
 			[
@@ -104,12 +114,27 @@ def test_stream_image(test_client : TestClient) -> None:
 
 		assert stream_exception.value.code == 1000
 
-		test_client.delete('/session', headers =
+		session_id = session_manager.find_api_session_id(access_token)
+		stages = process_manager.get_process(session_id).get('stages')
+
+		assert stages[0].get('type') == 'stream'
+		assert stages[0].get('progress').get('current') == 2
+		assert stages[1].get('type') == 'upload'
+		assert stages[1].get('progress').get('current') == 1
+
+		destroy_session_response = test_client.delete('/session', headers =
 		{
 			'Authorization': 'Bearer ' + access_token
 		})
 
-		assert websocket.receive() == { 'type': 'websocket.close', 'code': 1000, 'reason': '' }
+		assert destroy_session_response.status_code == 409
+
+	destroy_session_response = test_client.delete('/session', headers =
+	{
+		'Authorization': 'Bearer ' + access_token
+	})
+
+	assert destroy_session_response.status_code == 200
 
 
 @pytest.mark.parametrize('video_codec', [ 'av1', 'vp8' ])
