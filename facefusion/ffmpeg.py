@@ -7,7 +7,8 @@ from types import SimpleNamespace
 from typing import BinaryIO, List, Optional, cast
 
 import facefusion.choices
-from facefusion import cli_progress, ffmpeg_builder, ffprobe, logger, process_manager, state_manager, translator, vision
+from facefusion import ffmpeg_builder, ffprobe, logger, process_manager, state_manager, translator, vision
+from facefusion.clis import cli_progress
 from facefusion.filesystem import get_file_format, remove_file
 from facefusion.temp_helper import get_temp_file_path, get_temp_frames_pattern
 from facefusion.types import ApiSecurityStrategy, AudioEncoder, Buffer, Command, EncoderSet, Fps, ImageEncoder, Resolution, SampleRate, VideoEncoder, VideoFormat, VideoReaderMetadata
@@ -170,19 +171,18 @@ def extract_frames(target_path : str, output_path : str, temp_video_resolution :
 	)
 
 	time_current = time.monotonic()
-	process_manager.stage('extract', translator.get('extracting'),
+	with process_manager.stage('extract', translator.get('extracting'),
 	{
 		'unit': 'frame',
 		'current': 0,
 		'total': extract_frame_total,
 		'started_at': time_current,
 		'updated_at': time_current
-	})
-
-	with cli_progress.create() as progress:
-		process = run_ffmpeg(commands)
-		render_progress(process, progress)
-		return await_process(process).returncode == 0
+	}):
+		with cli_progress.create() as progress:
+			process = run_ffmpeg(commands)
+			render_progress(process, progress)
+			return await_process(process).returncode == 0
 
 
 def spawn_frames(target_path : str, output_path : str, temp_video_resolution : Resolution, temp_video_fps : Fps, trim_frame_start : int, trim_frame_end : int) -> bool:
@@ -201,19 +201,18 @@ def spawn_frames(target_path : str, output_path : str, temp_video_resolution : R
 	)
 
 	time_current = time.monotonic()
-	process_manager.stage('spawn', translator.get('spawning'),
+	with process_manager.stage('spawn', translator.get('spawning'),
 	{
 		'unit': 'frame',
 		'current': 0,
 		'total': spawn_frame_total,
 		'started_at': time_current,
 		'updated_at': time_current
-	})
-
-	with cli_progress.create() as progress:
-		process = run_ffmpeg(commands)
-		render_progress(process, progress)
-		return await_process(process).returncode == 0
+	}):
+		with cli_progress.create() as progress:
+			process = run_ffmpeg(commands)
+			render_progress(process, progress)
+			return await_process(process).returncode == 0
 
 
 def copy_image(target_path : str, output_path : str, temp_image_resolution : Resolution) -> bool:
@@ -340,19 +339,18 @@ def merge_video(target_path : str, output_path : str, temp_video_fps : Fps, outp
 	)
 
 	time_current = time.monotonic()
-	process_manager.stage('merge', translator.get('merging'),
+	with process_manager.stage('merge', translator.get('merging'),
 	{
 		'unit': 'frame',
 		'current': 0,
 		'total': merge_frame_total,
 		'started_at': time_current,
 		'updated_at': time_current
-	})
-
-	with cli_progress.create() as progress:
-		process = run_ffmpeg(commands)
-		render_progress(process, progress)
-		return await_process(process).returncode == 0
+	}):
+		with cli_progress.create() as progress:
+			process = run_ffmpeg(commands)
+			render_progress(process, progress)
+			return await_process(process).returncode == 0
 
 
 def concat_video(output_path : str, temp_output_paths : List[str]) -> bool:
