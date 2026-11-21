@@ -2,6 +2,7 @@ import asyncio
 import os
 import tempfile
 from datetime import timedelta
+from pathlib import Path
 from typing import Iterator
 from unittest.mock import patch
 
@@ -51,6 +52,25 @@ def before_each() -> Iterator[None]:
 def test_client() -> Iterator[TestClient]:
 	with TestClient(create_api()) as test_client:
 		yield test_client
+
+
+def test_create_session_reclaims_expired_step_videos(test_client : TestClient) -> None:
+	owner_path = Path(get_test_jobs_directory()) / 'expired-owner'
+	cache_path = owner_path / 'step-videos' / 'abandoned-job'
+	cache_path.mkdir(parents = True, exist_ok = True)
+	(cache_path / 'step.mp4').write_bytes(b'video')
+	os.utime(cache_path, (1, 1))
+	response = test_client.post('/session', json = { 'client_version': metadata.get('version') })
+	assert response.status_code == 201
+	assert not cache_path.exists()
+	assert owner_path.exists()
+
+
+def test_create_session_with_unreadable_step_videos(test_client : TestClient) -> None:
+	with patch('facefusion.jobs.job_manager.resolve_file_paths', side_effect = PermissionError):
+		response = test_client.post('/session', json = { 'client_version': metadata.get('version') })
+	assert response.status_code == 201
+	assert response.json().get('access_token')
 
 
 def test_create_session(test_client : TestClient) -> None:
