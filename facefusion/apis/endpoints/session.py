@@ -1,4 +1,5 @@
 import asyncio
+import os
 import secrets
 
 from starlette.requests import Request
@@ -9,8 +10,19 @@ from facefusion import content_store, face_store, inference_manager, process_man
 from facefusion.apis import asset_store, http_manager, websocket_manager
 from facefusion.apis.api_validator import validate_body
 from facefusion.apis.session_validator import validate_api_key
-from facefusion.filesystem import is_directory, remove_directory
+from facefusion.filesystem import is_directory, remove_directory, resolve_file_paths
 from facefusion.jobs import job_manager
+
+
+def clear_expired_session_videos(jobs_path : str) -> None:
+	try:
+		owner_paths = resolve_file_paths(jobs_path)
+	except OSError:
+		return
+	for owner_path in owner_paths:
+		owner_id = os.path.basename(owner_path)
+		if owner_id != session_context.resolve_local_id() and not session_manager.get_api_session(owner_id) and not session_manager.has_fork_session(owner_id):
+			job_manager.clear_expired_step_videos(owner_path)
 
 
 async def create_session(request : Request) -> JSONResponse:
@@ -40,6 +52,8 @@ async def create_session(request : Request) -> JSONResponse:
 
 			jobs_path = state_manager.get_jobs_path()
 			job_manager.init_jobs(jobs_path)
+
+			await asyncio.to_thread(clear_expired_session_videos, state_manager.get_item('jobs_path'))
 
 			return JSONResponse(
 			{
