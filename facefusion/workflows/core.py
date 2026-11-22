@@ -218,7 +218,7 @@ def restore_temp_frame(retained_frame_path : str, temp_frame_path : str) -> bool
 		remove_file(staged_frame_path)
 
 
-def restore_completed_frames(frame_directory : str) -> bool:
+def restore_completed_frames(frame_directory : str, verify_images : bool = True) -> bool:
 	try:
 		sequence = read_json(os.path.join(frame_directory, FRAME_SEQUENCE_FILE))
 		if not isinstance(sequence, dict):
@@ -239,7 +239,7 @@ def restore_completed_frames(frame_directory : str) -> bool:
 		temp_frames = [ get_temp_frames_pattern(temp_path, output_path, temp_frame_format, format(frame_index, '08d')) for frame_index in range(frame_start, frame_start + frame_total) ]
 		if [ os.path.basename(frame_path) for frame_path in retained_frames ] != [ os.path.basename(frame_path) for frame_path in temp_frames ]:
 			return False
-		if not all(map(is_readable_frame, retained_frames)):
+		if verify_images and not all(map(is_readable_frame, retained_frames)):
 			return False
 		setup()
 		return all(restore_temp_frame(retained_frame, temp_frame) for retained_frame, temp_frame in zip(retained_frames, temp_frames))

@@ -126,11 +126,7 @@ def run_step(job_id : JobId, step_index : StepIndex, step : Step, process_step :
 				return False
 		if is_directory(output_path):
 			return move_directory(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed')
-		if move_file(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed', resume_inputs):
-			if step_args.get('resume') is True:
-				job_manager.clear_step_frames(job_id, step_index)
-			return True
-		return False
+		return move_file(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed', resume_inputs)
 	job_manager.set_step_status(job_id, step_index, 'failed', resume_inputs)
 	return False
 
