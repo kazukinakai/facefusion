@@ -1,13 +1,14 @@
 import os
 from copy import copy
 from datetime import timedelta
+from glob import iglob
 from time import time
 from typing import List, Optional, cast
 
 import facefusion.choices
 from facefusion import logger, state_manager, translator
 from facefusion.filesystem import create_directory, get_file_name, get_file_size, is_directory, is_file, is_video, move_file, remove_directory, remove_file, resolve_file_paths, resolve_file_pattern
-from facefusion.jobs.job_helper import get_step_output_path, get_step_video_directory
+from facefusion.jobs.job_helper import get_step_frame_directory, get_step_output_path, get_step_video_directory
 from facefusion.json import read_json, write_json
 from facefusion.sanitizer import sanitize_job_id
 from facefusion.time_helper import get_current_date_time
@@ -26,6 +27,9 @@ def clear_expired_step_videos(jobs_path : str) -> None:
 	for directory_path in directory_paths:
 		try:
 			if not os.path.islink(directory_path) and is_directory(directory_path) and os.path.getmtime(directory_path) < expiration:
+				frame_directories = iglob(os.path.join(directory_path, 'frames-*', '*'))
+				if any(os.path.getmtime(frame_directory) >= expiration for frame_directory in frame_directories):
+					continue
 				if remove_directory(directory_path):
 					logger.info(translator.get('step_videos_expired').format(job_id = os.path.basename(directory_path)), __name__)
 		except OSError:
@@ -112,10 +116,17 @@ def has_completed_video(step : Step, step_output_path : str) -> bool:
 	return can_resume_step(step) and is_video(step_output_path) and get_file_size(step_output_path) > 0
 
 
+def clear_step_frames(job_id : JobId, step_index : StepIndex) -> bool:
+	directory_path = get_step_frame_directory(job_id, step_index)
+	return not is_directory(directory_path) or remove_directory(directory_path)
+
+
 def discard_step_videos(job_id : JobId, steps : List[Step], start_index : StepIndex = 0) -> bool:
 	for index, step in enumerate(steps[start_index:], start_index):
 		step_args = step.get('args')
 		if step_args.get('resume') is True:
+			if not clear_step_frames(job_id, index):
+				return False
 			video_path = get_step_output_path(job_id, index, step_args.get('output_path'), True)
 			if is_video(video_path) and not remove_file(video_path):
 				return False
@@ -291,6 +302,8 @@ def set_steps_status(job_id : JobId, step_status : StepStatus, retry : bool = Fa
 			if retry and can_resume_step(step):
 				continue
 			step['status'] = step_status
+			if not retry:
+				step.pop('resume_inputs', None)
 		return update_job_file(job_id, job)
 	return False
 

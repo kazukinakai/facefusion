@@ -35,6 +35,10 @@ def get_step_video_directory(job_id : JobId) -> str:
 	return os.path.join(state_manager.get_jobs_path(), 'step-videos', sanitize_job_id(job_id))
 
 
+def get_step_frame_directory(job_id : JobId, step_index : StepIndex) -> str:
+	return os.path.join(get_step_video_directory(job_id), 'frames-' + str(step_index))
+
+
 def get_step_output_path(job_id : JobId, step_index : StepIndex, output_path : str, resume : bool = False) -> Optional[str]:
 	if output_path:
 		output_directory_path, output_file_path = os.path.split(output_path)

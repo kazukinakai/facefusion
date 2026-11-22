@@ -114,14 +114,24 @@ def run_step(job_id : JobId, step_index : StepIndex, step : Step, process_step :
 		if not inputs_match:
 			clear_input_caches(job_helper.get_step_input_paths(step_args))
 
-	if job_manager.set_step_status(job_id, step_index, 'started', step_output_path = step_output_path) and process_step(job_id, step_index, step_args) == 0:
+	if step_args.get('resume') is True and is_directory(job_helper.get_step_frame_directory(job_id, step_index)):
+		if resume_inputs is None or step.get('resume_inputs') != resume_inputs:
+			if not job_manager.clear_step_frames(job_id, step_index):
+				return False
+			clear_input_caches(job_helper.get_step_input_paths(step_args))
+
+	if job_manager.set_step_status(job_id, step_index, 'started', resume_inputs, step_output_path) and process_step(job_id, step_index, step_args) == 0:
 		if step_args.get('resume') is True and step_output_path and os.path.dirname(step_output_path) == job_helper.get_step_video_directory(job_id):
 			if not create_directory(os.path.dirname(step_output_path)):
 				return False
 		if is_directory(output_path):
 			return move_directory(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed')
-		return move_file(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed', resume_inputs)
-	job_manager.set_step_status(job_id, step_index, 'failed')
+		if move_file(output_path, step_output_path) and job_manager.set_step_status(job_id, step_index, 'completed', resume_inputs):
+			if step_args.get('resume') is True:
+				job_manager.clear_step_frames(job_id, step_index)
+			return True
+		return False
+	job_manager.set_step_status(job_id, step_index, 'failed', resume_inputs)
 	return False
 
 
@@ -131,7 +141,7 @@ def run_steps(job_id : JobId, process_step : ProcessStep) -> bool:
 	if steps:
 		relocated_step_outputs : Dict[str, str] = {}
 		for index, step in enumerate(steps):
-			if job_manager.can_resume_step(step):
+			if step.get('args').get('resume') is True:
 				current_steps = job_manager.get_steps(job_id)
 				if index >= len(current_steps):
 					return False
@@ -190,7 +200,7 @@ def clean_steps(job_id : JobId, keep_completed_videos : bool = False) -> bool:
 				if not remove_directory(temp_output_path):
 					return False
 	directory_path = job_helper.get_step_video_directory(job_id)
-	if is_directory(directory_path) and not os.listdir(directory_path):
+	if is_directory(directory_path) and (not keep_completed_videos or not os.listdir(directory_path)):
 		return remove_directory(directory_path)
 	return True
 

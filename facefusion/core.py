@@ -1,9 +1,13 @@
+import hashlib
 import inspect
 import itertools
+import json
+import os
 import shutil
 import signal
 import sys
 from time import time
+from typing import Optional
 
 import facefusion.apis.core
 from facefusion import args_helper, benchmarker, content_analyser, content_store, face_store, hash_helper, inference_manager, logger, process_manager, session_context, session_manager, state_manager, translator, video_manager
@@ -321,6 +325,12 @@ def process_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> Er
 
 	try:
 		if common_pre_check() and processors_pre_check():
+			if step_args.get('resume') is True:
+				step_settings = args_helper.extract_api_args(state_manager.get_state())
+				step_settings.update(source_paths = step_args.get('source_paths'), target_path = step_args.get('target_path'))
+				settings_key = hashlib.sha256(json.dumps(step_settings, sort_keys = True).encode()).hexdigest()
+				frame_directory = os.path.join(job_helper.get_step_frame_directory(job_id, step_index), settings_key)
+				return conditional_process(frame_directory)
 			return conditional_process()
 		return 2
 
@@ -332,7 +342,7 @@ def process_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> Er
 		video_manager.destroy(session_id)
 
 
-def conditional_process() -> ErrorCode:
+def conditional_process(frame_directory : Optional[str] = None) -> ErrorCode:
 	start_time = time()
 
 	if state_manager.get_item('workflow_mode') == 'auto':
@@ -352,7 +362,7 @@ def conditional_process() -> ErrorCode:
 		if workflow_mode == 'image-to-image':
 			return image_to_image.process(start_time)
 		if workflow_mode == 'image-to-video':
-			return image_to_video.process(start_time)
+			return image_to_video.process(start_time, frame_directory)
 		if workflow_mode == 'image-to-video:frames':
 			return image_to_video_as_frames.process(start_time)
 

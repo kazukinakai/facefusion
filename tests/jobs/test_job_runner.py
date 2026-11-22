@@ -533,6 +533,9 @@ def test_resume_cleans_videos_on_job_edit_or_deletion(operation : str, video_ste
 	step_output_path = job_helper.get_step_output_path(job_id, 0, args.get('output_path'), True)
 	Path(step_output_path).parent.mkdir(exist_ok = True, parents = True)
 	job_manager.set_step_status(job_id, 0, 'completed')
+	frame_directory = Path(job_helper.get_step_frame_directory(job_id, 0))
+	frame_directory.mkdir()
+	(frame_directory / '0001.png').touch()
 	other_step_path = job_helper.get_step_output_path('other-job', 0, args.get('output_path'))
 	assert copy_file(args.get('target_path'), step_output_path) is True
 	assert copy_file(args.get('target_path'), other_step_path) is True
@@ -547,6 +550,7 @@ def test_resume_cleans_videos_on_job_edit_or_deletion(operation : str, video_ste
 		assert job_manager.remove_step(job_id, 0) is True
 	assert os.path.isfile(step_output_path) is False
 	assert os.path.isfile(other_step_path) is True
+	assert not frame_directory.exists()
 
 
 @pytest.mark.parametrize('changed_input', [ 'source', 'target', 'offline' ])
@@ -666,3 +670,47 @@ def test_remix_from_original_step_output_path(video_step_args : Args) -> None:
 	assert add_step(job_id, dict(video_step_args, target_path = os.path.relpath(original_path)))
 	assert submit_job(job_id)
 	assert run_job(job_id, process_step)
+
+
+@pytest.mark.parametrize('changed', [ True, False ])
+def test_retry_checks_partial_frame_inputs(changed : bool, video_step_args : Args, tmp_path : Path) -> None:
+	job_id = 'job-test-partial-frames'
+	target_path = tmp_path / 'target.mp4'
+	assert copy_file(video_step_args['target_path'], str(target_path))
+	video_step_args['target_path'] = str(target_path)
+	assert create_job(job_id)
+	assert add_step(job_id, video_step_args)
+	assert submit_job(job_id)
+	frame_directory = Path(job_helper.get_step_frame_directory(job_id, 0))
+	frame = frame_directory / '0001.png'
+
+	def interrupt_step(job : JobId, index : StepIndex, args : Args) -> ErrorCode:
+		frame_directory.mkdir(parents = True)
+		frame.touch()
+		return 1
+
+	def finish_step(job : JobId, index : StepIndex, args : Args) -> ErrorCode:
+		assert frame.exists() == (not changed)
+		return process_step(job, index, args)
+
+	assert not run_job(job_id, interrupt_step)
+	assert frame.exists()
+	if changed:
+		target_stat = target_path.stat()
+		os.utime(target_path, ns = (target_stat.st_atime_ns, target_stat.st_mtime_ns + 1_000_000_000))
+	assert retry_job(job_id, finish_step)
+	assert not frame_directory.exists()
+
+
+def test_expiry_uses_latest_partial_frame_activity() -> None:
+	job_id = 'job-test-long-video'
+	job_directory = Path(job_helper.get_step_video_directory(job_id))
+	settings_directory = Path(job_helper.get_step_frame_directory(job_id, 0)) / 'settings'
+	settings_directory.mkdir(parents = True)
+	(settings_directory / '00000000.png').touch()
+	os.utime(job_directory, (1, 1))
+	job_manager.clear_expired_step_videos(state_manager.get_jobs_path())
+	assert settings_directory.exists()
+	os.utime(settings_directory, (1, 1))
+	job_manager.clear_expired_step_videos(state_manager.get_jobs_path())
+	assert not job_directory.exists()
