@@ -1,13 +1,14 @@
 import os
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
 from facefusion import ffmpeg, ffmpeg_builder, process_manager, session_context, session_manager, state_manager
 from facefusion.download import conditional_download
 from facefusion.filesystem import copy_file, create_directory, get_file_extension
-from facefusion.jobs.job_manager import add_step, clear_jobs, create_job, find_job_ids, init_jobs, move_job_file, submit_job, submit_jobs
-from facefusion.jobs.job_runner import clean_steps, collect_output_set, finalize_steps, retry_job, retry_jobs, run_job, run_jobs, run_steps
+from facefusion.jobs import job_manager, job_runner
+from facefusion.jobs.job_manager import add_step, clean_steps, clear_jobs, create_job, find_job_ids, init_jobs, move_job_file, submit_job, submit_jobs
+from facefusion.jobs.job_runner import collect_output_set, finalize_steps, retry_job, retry_jobs, run_job, run_jobs, run_steps
 from facefusion.types import Args, ErrorCode, JobId, StepIndex
 from tests.assert_helper import get_test_example_file, get_test_examples_directory, get_test_jobs_directory, get_test_output_path, is_test_output_file, is_test_output_sequence, prepare_test_output_directory
 
@@ -422,3 +423,115 @@ def test_collect_output_set() -> None:
 	}
 
 	assert collect_output_set('job-test-collect-output-set') == output_set
+
+
+def test_optimize_job() -> None:
+	job_id = 'job-test-optimize'
+	args = { 'target_path': get_test_example_file('target-240p.mp4'), 'output_path': get_test_output_path('output.mp4'), 'trim_frame_start': 37 }
+	assert create_job(job_id) is True
+	assert add_step(job_id, args) is True
+	with patch('facefusion.vision.count_video_frame_total', return_value = 2250):
+		assert job_manager.optimize_job(job_id)
+	assert job_manager.get_steps(job_id) == [
+		{ 'args': dict(args, trim_frame_start = start, trim_frame_end = end), 'status': 'drafted' }
+		for start, end in [ (37, 1037), (1037, 2037), (2037, 2250) ]
+	]
+	assert not job_manager.optimize_job(job_id)
+
+
+@pytest.mark.parametrize('frame_total, overrides',
+[
+	(0, {}),
+	(3, { 'trim_frame_end': 0 }),
+	(3, { 'output_video_fps': 1 }),
+	(3, { 'output_path': get_test_example_file('target-240p.mp4') })
+])
+def test_optimize_preserves_invalid_draft(frame_total : int, overrides : Args) -> None:
+	job_id = 'job-test-invalid-optimize'
+	args = { 'target_path': get_test_example_file('target-240p.mp4'), 'output_path': get_test_output_path('output.mp4'), **overrides }
+	assert create_job(job_id) is True
+	assert add_step(job_id, args) is True
+	before = job_manager.read_job_file(job_id)
+	assert not job_manager.optimize_job(job_id, frame_total)
+	assert job_manager.read_job_file(job_id) == before
+
+
+@pytest.fixture
+def interrupted_job() -> JobId:
+	job_id = 'job-test-interrupted'
+	args = { 'target_path': get_test_example_file('source.jpg'), 'output_path': get_test_output_path('output.jpg') }
+	assert create_job(job_id)
+	for _ in range(3):
+		assert add_step(job_id, args)
+	assert submit_job(job_id)
+	for index, step in enumerate(job_manager.get_steps(job_id)[:2]):
+		assert job_runner.run_step(job_id, index, step, process_step)
+	assert job_manager.set_step_status(job_id, 2, 'started')
+	return job_id
+
+
+@pytest.fixture
+def failed_job(interrupted_job : JobId) -> JobId:
+	assert not run_job(interrupted_job, Mock(return_value = 1))
+	return interrupted_job
+
+
+def test_resume_queued_job(interrupted_job : JobId) -> None:
+	process = Mock(wraps = process_step)
+	assert run_job(interrupted_job, process)
+	assert [ call.args[1] for call in process.call_args_list ] == [ 2 ]
+
+
+def test_retry_failed_step(failed_job : JobId) -> None:
+	process = Mock(wraps = process_step)
+	assert retry_job(failed_job, process)
+	assert [ call.args[1] for call in process.call_args_list ] == [ 2 ]
+
+
+def test_retry_missing_output(failed_job : JobId) -> None:
+	os.remove(get_test_output_path('output-job-test-interrupted-0.jpg'))
+	process = Mock(wraps = process_step)
+	assert retry_job(failed_job, process)
+	assert [ call.args[1] for call in process.call_args_list ] == [ 0, 2 ]
+
+
+def test_retry_after_insert(failed_job : JobId) -> None:
+	assert job_manager.insert_step(failed_job, 1, job_manager.get_steps(failed_job)[0]['args'])
+	process = Mock(wraps = process_step)
+	assert retry_job(failed_job, process)
+	assert [ call.args[1] for call in process.call_args_list ] == [ 1, 2, 3 ]
+
+
+def test_retry_after_remove(failed_job : JobId) -> None:
+	assert job_manager.remove_step(failed_job, 0)
+	process = Mock(wraps = process_step)
+	assert retry_job(failed_job, process)
+	assert [ call.args[1] for call in process.call_args_list ] == [ 0, 1 ]
+
+
+def test_cancel_interrupted_job(interrupted_job : JobId) -> None:
+	assert job_manager.cancel_job(interrupted_job)
+	assert not is_test_output_file('output-job-test-interrupted-0.jpg')
+
+
+def test_delete_failed_job(failed_job : JobId) -> None:
+	assert job_manager.delete_job(failed_job)
+	assert not is_test_output_file('output-job-test-interrupted-0.jpg')
+
+
+def test_retry_finalization() -> None:
+	job_id = 'job-test-retry-finalization'
+	assert create_job(job_id)
+	for target, output in [ ('source.jpg', 'output.jpg'), ('target-240p.mp4', 'output.mp4'), ('target-240p.mp4', 'output.mp4') ]:
+		assert add_step(job_id, { 'target_path': get_test_example_file(target), 'output_path': get_test_output_path(output) })
+	assert submit_job(job_id)
+	with patch.object(job_runner, 'concat_video', return_value = False):
+		assert not run_job(job_id, process_step)
+	process = Mock(wraps = process_step)
+	with patch.object(job_runner, 'concat_video', wraps = ffmpeg.concat_video) as concat:
+		assert retry_job(job_id, process)
+	concat.assert_called_once_with(get_test_output_path('output.mp4'), [ get_test_output_path('output-job-test-retry-finalization-1.mp4'), get_test_output_path('output-job-test-retry-finalization-2.mp4') ])
+	process.assert_not_called()
+	assert is_test_output_file('output.jpg') is True
+	assert is_test_output_file('output.mp4') is True
+	assert not is_test_output_file('output-job-test-retry-finalization-0.jpg')

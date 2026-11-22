@@ -4,12 +4,13 @@ from typing import List, Optional, cast
 
 import facefusion.choices
 from facefusion import state_manager
-from facefusion.filesystem import create_directory, get_file_name, is_directory, is_file, move_file, remove_directory, remove_file, resolve_file_pattern
+from facefusion.filesystem import create_directory, get_file_format, get_file_name, has_audio, is_directory, is_file, move_file, remove_directory, remove_file, resolve_file_pattern
 from facefusion.jobs.job_helper import get_step_output_path
 from facefusion.json import read_json, write_json
 from facefusion.sanitizer import sanitize_job_id
 from facefusion.time_helper import get_current_date_time
 from facefusion.types import Args, Content, Job, JobId, JobSet, JobStatus, Step, StepIndex, StepStatus
+from facefusion.vision import detect_video_fps, restrict_video_range
 
 
 def init_jobs(jobs_path : str) -> bool:
@@ -34,6 +35,34 @@ def create_job(job_id : JobId) -> bool:
 	}
 
 	return create_job_file(job_id, job)
+
+
+def optimize_job(job_id : JobId, frame_total : int = 1000) -> bool:
+	job = read_job_file(job_id)
+	if not job or job_id not in find_job_ids('drafted') or len(job['steps']) != 1 or frame_total < 1:
+		return False
+
+	args = job['steps'][0]['args']
+	target = args.get('target_path')
+	output_path = args.get('output_path') or ''
+	if get_file_format(output_path) not in facefusion.choices.video_formats:
+		return False
+	if has_audio(args.get('source_paths')):
+		return False
+	if args.get('output_video_fps') not in (None, detect_video_fps(target)):
+		return False
+	input_paths = [ target, *(args.get('source_paths') or []) ]
+	if any(os.path.realpath(input_path) == os.path.realpath(output_path) for input_path in input_paths):
+		return False
+	start, end = restrict_video_range(target, args.get('trim_frame_start'), args.get('trim_frame_end'))
+	job['steps'] = [
+		{
+			'args': dict(args, trim_frame_start = trim_frame_start, trim_frame_end = min(trim_frame_start + frame_total, end)),
+			'status': 'drafted'
+		}
+		for trim_frame_start in range(start, end, frame_total)
+	]
+	return bool(job['steps']) and update_job_file(job_id, job)
 
 
 def submit_job(job_id : JobId) -> bool:
@@ -63,7 +92,7 @@ def cancel_job(job_id : JobId) -> bool:
 	queued_job_ids = find_job_ids('queued')
 
 	if job_id in queued_job_ids:
-		return set_steps_status(job_id, 'drafted') and move_job_file(job_id, 'drafted')
+		return clean_steps(job_id) and set_steps_status(job_id, 'drafted') and move_job_file(job_id, 'drafted')
 	return False
 
 
@@ -82,7 +111,7 @@ def cancel_jobs(halt_on_error : bool) -> bool:
 
 
 def delete_job(job_id : JobId) -> bool:
-	return delete_job_file(job_id)
+	return clean_steps(job_id) and delete_job_file(job_id)
 
 
 def delete_jobs(halt_on_error : bool) -> bool:
@@ -165,7 +194,7 @@ def insert_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> boo
 	if step_index and step_index < 0:
 		step_index = count_step_total(job_id) - 1
 
-	if job and has_step(job_id, step_index):
+	if job and has_step(job_id, step_index) and invalidate_step_outputs(job_id, job['steps'], step_index):
 		job.get('steps').insert(step_index,
 		{
 			'args': step_args,
@@ -181,7 +210,7 @@ def remove_step(job_id : JobId, step_index : StepIndex) -> bool:
 	if step_index and step_index < 0:
 		step_index = count_step_total(job_id) - 1
 
-	if job and has_step(job_id, step_index):
+	if job and has_step(job_id, step_index) and invalidate_step_outputs(job_id, job['steps'], step_index):
 		job.get('steps').pop(step_index)
 		return update_job_file(job_id, job)
 	return False
@@ -226,6 +255,39 @@ def set_steps_status(job_id : JobId, step_status : StepStatus) -> bool:
 			step['status'] = step_status
 		return update_job_file(job_id, job)
 	return False
+
+
+def requeue_unfinished_steps(job_id : JobId) -> bool:
+	job = read_job_file(job_id)
+
+	if job:
+		for step in job['steps']:
+			if step['status'] != 'completed':
+				step['status'] = 'queued'
+		return update_job_file(job_id, job)
+	return False
+
+
+def invalidate_step_outputs(job_id : JobId, steps : List[Step], start : StepIndex) -> bool:
+	for index, step in enumerate(steps[start:], start):
+		if step['status'] == 'completed':
+			if not clean_step_output(job_id, index, step):
+				return False
+			step['status'] = 'drafted'
+	return True
+
+
+def clean_step_output(job_id : JobId, index : StepIndex, step : Step) -> bool:
+	path = get_step_output_path(job_id, index, step['args'].get('output_path'))
+	if is_file(path):
+		return remove_file(path)
+	if is_directory(path):
+		return remove_directory(path)
+	return True
+
+
+def clean_steps(job_id : JobId) -> bool:
+	return all(clean_step_output(job_id, index, step) for index, step in enumerate(get_steps(job_id)))
 
 
 def read_job_file(job_id : JobId) -> Optional[Job]:
