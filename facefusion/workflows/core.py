@@ -5,7 +5,7 @@ from typing import Deque, List
 
 import numpy
 
-from facefusion import logger, process_manager, state_manager, thread_helper, translator
+from facefusion import frame_checkpoint, logger, process_manager, state_manager, thread_helper, translator
 from facefusion.audio import create_empty_audio_frame, get_audio_frame, get_voice_frame
 from facefusion.clis import cli_progress
 from facefusion.common_helper import get_first
@@ -41,6 +41,8 @@ def setup() -> ErrorCode:
 
 
 def clear() -> ErrorCode:
+	if frame_checkpoint.is_enabled():
+		return 0
 	if clear_temp_directory(state_manager.get_temp_path(), state_manager.get_item('output_path')):
 		logger.debug(translator.get('clearing_temp'), __name__)
 	return 0
@@ -112,6 +114,8 @@ def conditional_get_target_vision_frames(frame_index : int) -> List[VisionFrame]
 
 
 def process_temp_frame(temp_frame_path : str, frame_index : int) -> bool:
+	if frame_checkpoint.is_enabled() and frame_checkpoint.read_frame(frame_index) is not None:
+		return True
 	reference_vision_frames = conditional_get_reference_vision_frames()
 	source_vision_frames = read_static_images(state_manager.get_item('source_paths'))
 	source_audio_frame = conditional_get_source_audio_frame(frame_index)
@@ -133,6 +137,8 @@ def process_temp_frame(temp_frame_path : str, frame_index : int) -> bool:
 		})
 
 	temp_vision_frame = conditional_merge_vision_mask(temp_vision_frame, temp_vision_mask)
+	if frame_checkpoint.is_enabled():
+		return frame_checkpoint.write_frame(frame_index, temp_vision_frame)
 	return write_image(temp_frame_path, temp_vision_frame)
 
 
@@ -192,7 +198,8 @@ def process_frames() -> ErrorCode:
 							futures.clear()
 
 						else:
-							future.result()
+							if not future.result() and frame_checkpoint.is_enabled():
+								return 1
 							process_manager.update()
 							progress.update()
 

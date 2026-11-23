@@ -45,6 +45,8 @@ def apply_args(args : Args, apply_state_item : ApplyStateItem) -> None:
 	apply_state_item('voice_extractor_model', args.get('voice_extractor_model'))
 	apply_state_item('trim_frame_start', args.get('trim_frame_start'))
 	apply_state_item('trim_frame_end', args.get('trim_frame_end'))
+	apply_state_item('resume', args.get('resume'))
+	apply_state_item('resume_path', args.get('resume_path'))
 	apply_state_item('temp_frame_format', args.get('temp_frame_format'))
 	apply_state_item('temp_pixel_format', args.get('temp_pixel_format'))
 	apply_state_item('target_frame_amount', args.get('target_frame_amount'))

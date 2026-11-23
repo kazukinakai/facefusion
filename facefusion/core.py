@@ -6,7 +6,7 @@ import sys
 from time import time
 
 import facefusion.apis.core
-from facefusion import args_helper, benchmarker, content_analyser, content_store, face_store, hash_helper, inference_manager, logger, process_manager, session_context, session_manager, state_manager, translator, video_manager
+from facefusion import args_helper, benchmarker, content_analyser, content_store, face_store, frame_checkpoint, hash_helper, inference_manager, logger, process_manager, session_context, session_manager, state_manager, translator, video_manager
 from facefusion.args_helper import apply_args
 from facefusion.clis import cli_table
 from facefusion.download import conditional_download_files
@@ -312,8 +312,17 @@ def process_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> Er
 
 	try:
 		if common_pre_check() and processors_pre_check():
-			return conditional_process()
+			if not state_manager.get_item('resume'):
+				return conditional_process()
+			with frame_checkpoint.job(job_id, step_index):
+				return conditional_process()
 		return 2
+
+	except OSError as error:
+		if not frame_checkpoint.is_enabled():
+			raise
+		logger.error(str(error), __name__)
+		return 1
 
 	finally:
 		if process_manager.is_stopping():

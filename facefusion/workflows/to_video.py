@@ -6,7 +6,7 @@ from typing import Deque, Tuple
 import cv2
 import numpy
 
-from facefusion import content_analyser, ffmpeg, logger, process_manager, state_manager, thread_helper, translator, video_manager
+from facefusion import content_analyser, ffmpeg, frame_checkpoint, logger, process_manager, state_manager, thread_helper, translator, video_manager
 from facefusion.audio import restrict_audio_range
 from facefusion.clis import cli_progress
 from facefusion.common_helper import get_first, get_middle
@@ -46,6 +46,10 @@ def create_temp_frames() -> ErrorCode:
 
 
 def process_memory_frame(frame_index : int, temp_video_resolution : Resolution, output_video_resolution : Resolution) -> VisionFrame:
+	if frame_checkpoint.is_enabled():
+		checkpoint_frame = frame_checkpoint.read_frame(frame_index)
+		if checkpoint_frame is not None and (checkpoint_frame.shape[1], checkpoint_frame.shape[0]) == output_video_resolution:
+			return checkpoint_frame
 	target_vision_frames = conditional_get_target_vision_frames(frame_index)
 	target_vision_frame = get_middle(target_vision_frames)
 	temp_vision_frame = target_vision_frame.copy()
@@ -64,7 +68,14 @@ def process_memory_frame(frame_index : int, temp_video_resolution : Resolution, 
 	if state_manager.get_item('temp_pixel_format') == 'bgr24':
 		temp_vision_frame = temp_vision_frame[:, :, :3]
 
-	return numpy.ascontiguousarray(temp_vision_frame)
+	temp_vision_frame = numpy.ascontiguousarray(temp_vision_frame)
+	if frame_checkpoint.is_enabled():
+		if not frame_checkpoint.write_frame(frame_index, temp_vision_frame):
+			raise OSError('Could not write processed frame checkpoint')
+		temp_vision_frame = frame_checkpoint.read_frame(frame_index)
+		if temp_vision_frame is None:
+			raise OSError('Could not read committed frame checkpoint')
+	return temp_vision_frame
 
 
 def process_memory_frames() -> ErrorCode:
@@ -93,6 +104,7 @@ def process_memory_frames() -> ErrorCode:
 
 				with thread_helper.create_executor(state_manager.get_item('execution_thread_count')) as executor:
 					futures : Deque[Future[VisionFrame]] = deque()
+					checkpoint_error = False
 
 					for frame_index in temp_frame_range:
 						future = executor.submit(process_memory_frame, frame_index, temp_video_resolution, output_video_resolution)
@@ -109,7 +121,16 @@ def process_memory_frames() -> ErrorCode:
 							futures.clear()
 
 						else:
-							video_manager.write_video_frame(video_writer, future.result())
+							try:
+								video_manager.write_video_frame(video_writer, future.result())
+							except OSError as error:
+								logger.error(str(error), __name__)
+								checkpoint_error = True
+								process_manager.stop()
+								for pending_future in futures:
+									pending_future.cancel()
+								futures.clear()
+								continue
 							process_manager.update()
 							progress.update()
 
@@ -119,6 +140,8 @@ def process_memory_frames() -> ErrorCode:
 		for processor_module in get_processors_modules(state_manager.get_item('processors')):
 			processor_module.post_process()
 
+		if checkpoint_error:
+			return 1
 		if process_manager.is_stopping():
 			return 4
 	else:
