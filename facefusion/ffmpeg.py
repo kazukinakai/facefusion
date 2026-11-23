@@ -375,7 +375,7 @@ def concat_video(output_path : str, temp_output_paths : List[str]) -> bool:
 		ffmpeg_builder.copy_video_encoder(),
 		ffmpeg_builder.set_audio_encoder(output_audio_encoder),
 		ffmpeg_builder.set_audio_quality(output_audio_encoder, output_audio_quality),
-		ffmpeg_builder.sync_audio(),
+		ffmpeg_builder.sync_audio_timestamp(),
 		ffmpeg_builder.set_faststart(output_video_format),
 		ffmpeg_builder.force_output(output_path)
 	)

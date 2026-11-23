@@ -68,20 +68,6 @@ def create_workflow_program() -> ArgumentParser:
 		scopes = [ 'api', 'cli' ],
 		groups = [ 'workflow' ]
 	)
-	capability_store.register_capability_set(
-		[
-			group_workflow.add_argument(
-				'--step-frame-total',
-				help = translator.get('help.step_frame_total'),
-				type = int,
-				default = config.get_int_value('workflow', 'step_frame_total', '1000'),
-				choices = facefusion.choices.step_frame_total_range,
-				metavar = create_int_metavar(facefusion.choices.step_frame_total_range)
-			)
-		],
-		scopes = [ 'api', 'cli' ],
-		groups = [ 'workflow' ]
-	)
 
 	return program
 
@@ -617,18 +603,6 @@ def create_voice_extractor_program() -> ArgumentParser:
 def create_frame_extraction_program() -> ArgumentParser:
 	program = ArgumentParser(add_help = False)
 	group_frame_extraction = program.add_argument_group('frame extraction')
-	capability_store.register_capability_set(
-		[
-			group_frame_extraction.add_argument(
-				'--resume',
-				help = translator.get('help.resume'),
-				action = 'store_true',
-				default = config.get_bool_value('frame_extraction', 'resume', 'False')
-			)
-		],
-		scopes = [ 'api', 'cli' ],
-		groups = [ 'frame_extraction' ]
-	)
 
 	capability_store.register_capability_set(
 		[
@@ -1291,17 +1265,6 @@ def create_program() -> ArgumentParser:
 		formatter_class = create_help_formatter_large
 	)
 	sub_program.add_parser(
-		'job-optimize',
-		help = translator.get('help.job_optimize'),
-		parents =
-		[
-			create_job_id_program(),
-			create_jobs_path_program(),
-			create_log_level_program()
-		],
-		formatter_class = create_help_formatter_large
-	)
-	sub_program.add_parser(
 		'job-submit',
 		help = translator.get('help.job_submit'),
 		parents =
@@ -1355,22 +1318,6 @@ def create_program() -> ArgumentParser:
 			create_jobs_path_program(),
 			create_source_paths_program(),
 			create_target_path_program(),
-			create_output_path_program(),
-			collect_step_program(),
-			create_log_level_program()
-		],
-		formatter_class = create_help_formatter_large
-	)
-	sub_program.add_parser(
-		'job-remix-step',
-		help = translator.get('help.job_remix_step'),
-		parents =
-		[
-			create_job_id_program(),
-			create_step_index_program(),
-			create_config_path_program(),
-			create_jobs_path_program(),
-			create_source_paths_program(),
 			create_output_path_program(),
 			collect_step_program(),
 			create_log_level_program()

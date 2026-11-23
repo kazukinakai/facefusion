@@ -4,13 +4,11 @@ from typing import List, Optional, cast
 
 import facefusion.choices
 from facefusion import state_manager
-from facefusion.filesystem import create_directory, get_file_format, get_file_name, has_audio, is_directory, is_file, move_file, remove_directory, remove_file, resolve_file_pattern
-from facefusion.jobs.job_helper import get_step_output_path
+from facefusion.filesystem import create_directory, get_file_name, is_directory, is_file, move_file, remove_directory, remove_file, resolve_file_pattern
 from facefusion.json import read_json, write_json
 from facefusion.sanitizer import sanitize_job_id
 from facefusion.time_helper import get_current_date_time
 from facefusion.types import Args, Content, Job, JobId, JobSet, JobStatus, Step, StepIndex, StepStatus
-from facefusion.vision import restrict_video_range
 
 
 def init_jobs(jobs_path : str) -> bool:
@@ -35,41 +33,6 @@ def create_job(job_id : JobId) -> bool:
 	}
 
 	return create_job_file(job_id, job)
-
-
-def optimize_job(job_id : JobId) -> bool:
-	job = read_job_file(job_id)
-
-	if job:
-		steps = split_job(job)
-		steps_total = len(steps)
-
-		if steps_total > count_step_total(job_id):
-			job['steps'] = steps
-			return update_job_file(job_id, job)
-	return False
-
-
-def split_job(job : Job) -> List[Step]:
-	steps : List[Step] = []
-
-	for step in job.get('steps'):
-		trim_frame_start, trim_frame_end = restrict_video_range(step.get('args').get('target_path'), step.get('args').get('trim_frame_start'), step.get('args').get('trim_frame_end'))
-		has_source_audio = has_audio(step.get('args').get('source_paths'))
-		has_video_output = get_file_format(step.get('args').get('output_path')) in facefusion.choices.video_formats
-		is_split_step = step.get('args').get('step_frame_total', 0) > 0 and has_video_output and not has_source_audio
-
-		if is_split_step:
-			for step_frame_start in range(trim_frame_start, trim_frame_end, step.get('args').get('step_frame_total')):
-				steps.append(
-				{
-					'args': dict(step.get('args'), trim_frame_start = step_frame_start, trim_frame_end = min(step_frame_start + step.get('args').get('step_frame_total'), trim_frame_end)),
-					'status': step.get('status')
-				})
-
-		if not is_split_step:
-			steps.append(step)
-	return steps
 
 
 def submit_job(job_id : JobId) -> bool:
@@ -120,9 +83,8 @@ def cancel_jobs(halt_on_error : bool) -> bool:
 def delete_job(job_id : JobId) -> bool:
 	from facefusion.jobs import job_runner
 
-	if any(step.get('args').get('resume') for step in get_steps(job_id)):
-		if not job_runner.clean_steps(job_id):
-			return False
+	if any(step.get('args').get('resume') for step in get_steps(job_id)) and not job_runner.clean_steps(job_id):
+		return False
 	return delete_job_file(job_id)
 
 
@@ -185,20 +147,6 @@ def add_step(job_id : JobId, step_args : Args) -> bool:
 	return False
 
 
-def remix_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> bool:
-	steps = get_steps(job_id)
-	step_args = copy(step_args)
-
-	if step_index and step_index < 0:
-		step_index = count_step_total(job_id) - 1
-
-	if has_step(job_id, step_index):
-		output_path = steps[step_index].get('args').get('output_path')
-		step_args['target_path'] = get_step_output_path(job_id, step_index, output_path)
-		return add_step(job_id, step_args)
-	return False
-
-
 def insert_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> bool:
 	job = read_job_file(job_id)
 	step_args = copy(step_args)
@@ -207,10 +155,11 @@ def insert_step(job_id : JobId, step_index : StepIndex, step_args : Args) -> boo
 		step_index = count_step_total(job_id) - 1
 
 	if job and has_step(job_id, step_index):
-		from facefusion.jobs import job_runner
+		if any(step.get('args').get('resume') for step in job.get('steps')):
+			from facefusion.jobs import job_runner
 
-		if any(step.get('args').get('resume') for step in job.get('steps')) and not job_runner.clean_steps(job_id):
-			return False
+			if not job_runner.clean_steps(job_id):
+				return False
 		job.get('steps').insert(step_index,
 		{
 			'args': step_args,
@@ -227,10 +176,11 @@ def remove_step(job_id : JobId, step_index : StepIndex) -> bool:
 		step_index = count_step_total(job_id) - 1
 
 	if job and has_step(job_id, step_index):
-		from facefusion.jobs import job_runner
+		if any(step.get('args').get('resume') for step in job.get('steps')):
+			from facefusion.jobs import job_runner
 
-		if any(step.get('args').get('resume') for step in job.get('steps')) and not job_runner.clean_steps(job_id):
-			return False
+			if not job_runner.clean_steps(job_id):
+				return False
 		job.get('steps').pop(step_index)
 		return update_job_file(job_id, job)
 	return False

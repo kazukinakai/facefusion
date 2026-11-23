@@ -47,7 +47,6 @@ def apply_args(args : Args, apply_state_item : ApplyStateItem) -> None:
 	apply_state_item('trim_frame_end', args.get('trim_frame_end'))
 	apply_state_item('temp_frame_format', args.get('temp_frame_format'))
 	apply_state_item('temp_pixel_format', args.get('temp_pixel_format'))
-	apply_state_item('resume', args.get('resume'))
 	apply_state_item('target_frame_amount', args.get('target_frame_amount'))
 	apply_state_item('output_image_quality', args.get('output_image_quality'))
 	apply_state_item('output_image_scale', args.get('output_image_scale'))
@@ -66,7 +65,6 @@ def apply_args(args : Args, apply_state_item : ApplyStateItem) -> None:
 
 	apply_state_item('workflow_mode', args.get('workflow_mode'))
 	apply_state_item('workflow_strategy', args.get('workflow_strategy'))
-	apply_state_item('step_frame_total', args.get('step_frame_total'))
 	apply_state_item('processors', args.get('processors'))
 
 	available_processors = resolve_available_processors()

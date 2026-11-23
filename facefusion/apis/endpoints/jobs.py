@@ -188,18 +188,6 @@ async def update_job(request : Request) -> JSONResponse:
 	job_id = request.path_params.get('job_id')
 	action = request.query_params.get('action')
 
-	if action == 'optimize':
-		if job_manager.optimize_job(job_id):
-			return JSONResponse(
-			{
-				'message': translator.get('ok', 'facefusion.apis')
-			}, status_code = HTTP_200_OK)
-
-		return JSONResponse(
-		{
-			'message': translator.get('job_not_optimized', 'facefusion.apis')
-		}, status_code = HTTP_400_BAD_REQUEST)
-
 	if action == 'submit':
 		if job_manager.find_job_ids('queued'):
 			return JSONResponse(
@@ -370,18 +358,6 @@ async def create_step(request : Request) -> JSONResponse:
 			return JSONResponse(
 			{
 				'message': translator.get('job_step_not_inserted', 'facefusion.apis')
-			}, status_code = HTTP_400_BAD_REQUEST)
-
-		if action == 'remix':
-			if job_manager.remix_step(job_id, step_index, step_args):
-				return JSONResponse(
-				{
-					'message': translator.get('ok', 'facefusion.apis')
-				}, status_code = HTTP_201_CREATED)
-
-			return JSONResponse(
-			{
-				'message': translator.get('job_step_not_remixed', 'facefusion.apis')
 			}, status_code = HTTP_400_BAD_REQUEST)
 
 	return JSONResponse(

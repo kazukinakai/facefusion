@@ -23,7 +23,6 @@ LOCALES : Locales =\
 		'job_not_deleted': 'job not deleted',
 		'job_not_started': 'job not started',
 		'job_not_cancelled': 'job not cancelled',
-		'job_not_optimized': 'job not optimized',
 		'job_not_retried': 'job not retried',
 		'job_all_not_submitted': 'jobs not submitted',
 		'job_all_not_cancelled': 'jobs not cancelled',
@@ -32,7 +31,6 @@ LOCALES : Locales =\
 		'job_all_not_retried': 'jobs not retried',
 		'job_step_not_added': 'step not added',
 		'job_step_not_inserted': 'step not inserted',
-		'job_step_not_remixed': 'step not remixed',
 		'job_step_not_removed': 'step not removed'
 	}
 }
