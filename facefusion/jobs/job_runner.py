@@ -1,6 +1,6 @@
 import os
 
-from facefusion import process_manager, session_manager, state_manager, store_manager
+from facefusion import frame_checkpoint, logger, process_manager, session_manager, state_manager, store_manager
 from facefusion.ffmpeg import concat_video
 from facefusion.filesystem import are_images, are_videos, copy_file, create_directory, is_directory, is_file, move_directory, move_file, remove_directory, remove_file, resolve_file_paths
 from facefusion.jobs import job_helper, job_manager
@@ -8,6 +8,15 @@ from facefusion.types import JobId, JobOutputSet, ProcessStep, Step, StepIndex
 
 
 def run_job(job_id : JobId, process_step : ProcessStep) -> bool:
+	try:
+		with frame_checkpoint.job_session(job_id):
+			return run_job_steps(job_id, process_step)
+	except OSError as error:
+		logger.warn(str(error), __name__)
+		return False
+
+
+def run_job_steps(job_id : JobId, process_step : ProcessStep) -> bool:
 	queued_job_ids = job_manager.find_job_ids('queued')
 
 	if job_id in queued_job_ids:
@@ -22,7 +31,10 @@ def run_job(job_id : JobId, process_step : ProcessStep) -> bool:
 			clean_steps(job_id)
 			process_manager.end()
 			session_manager.join_session()
-			return job_manager.move_job_file(job_id, 'completed')
+			if job_manager.move_job_file(job_id, 'completed'):
+				frame_checkpoint.finish_job(job_id)
+				return True
+			return False
 
 		clean_steps(job_id)
 		process_manager.end()

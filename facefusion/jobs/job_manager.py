@@ -3,7 +3,7 @@ from copy import copy
 from typing import List, Optional, cast
 
 import facefusion.choices
-from facefusion import state_manager
+from facefusion import frame_checkpoint, logger, state_manager
 from facefusion.filesystem import create_directory, get_file_name, is_directory, is_file, move_file, remove_directory, remove_file, resolve_file_pattern
 from facefusion.json import read_json, write_json
 from facefusion.sanitizer import sanitize_job_id
@@ -83,9 +83,16 @@ def cancel_jobs(halt_on_error : bool) -> bool:
 def delete_job(job_id : JobId) -> bool:
 	from facefusion.jobs import job_runner
 
-	if any(step.get('args').get('resume') for step in get_steps(job_id)) and not job_runner.clean_steps(job_id):
+	try:
+		with frame_checkpoint.job_session(job_id):
+			if not frame_checkpoint.finish_job(job_id):
+				return False
+			if any(step.get('args').get('resume') for step in get_steps(job_id)) and not job_runner.clean_steps(job_id):
+				return False
+			return delete_job_file(job_id)
+	except OSError as error:
+		logger.warn(str(error), __name__)
 		return False
-	return delete_job_file(job_id)
 
 
 def delete_jobs(halt_on_error : bool) -> bool:

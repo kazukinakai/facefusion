@@ -130,6 +130,8 @@ LOCALES : Locales =\
 			'voice_extractor_model': 'choose the model responsible for extracting the voices',
 			'trim_frame_start': 'specify the starting frame of the target video',
 			'trim_frame_end': 'specify the ending frame of the target video',
+			'resume': 'reuse validated processed video frames after interruption',
+			'resume_path': 'specify the persistent checkpoint directory for video processing',
 			'temp_frame_format': 'specify the temporary resources format',
 			'temp_pixel_format': 'specify the temporary pixel format',
 			'target_frame_amount': 'specify the amount of target frames forwarded to the processor',
