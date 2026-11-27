@@ -1,5 +1,6 @@
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -171,7 +172,7 @@ def test_resumed_video_matches_uninterrupted_video(strategy : str, frame_format 
 		'output_audio_encoder': 'aac',
 		'output_audio_quality': 80,
 		'output_audio_volume': 100,
-		'execution_thread_count': 1,
+		'execution_thread_count': 2,
 		'video_memory_strategy': 'tolerant'
 	}
 	for key, value in settings.items():
@@ -183,6 +184,28 @@ def test_resumed_video_matches_uninterrupted_video(strategy : str, frame_format 
 	resumed_path = tmp_path / 'resumed.mp4'
 	state_manager.init_item('resume', True)
 	state_manager.init_item('output_path', str(baseline_path))
+	if strategy == 'memory':
+		# Count submitted frames that the real encoder has not consumed yet.
+		# Eager submission of the whole ten-frame clip exceeds this window.
+		submitted = 0
+		written = 0
+		original_submit = ThreadPoolExecutor.submit
+		original_write = video_manager.write_video_frame
+
+		def submit(executor, function, *args, **kwargs):
+			nonlocal submitted
+			if function is to_video.process_memory_frame:
+				submitted += 1
+				assert submitted - written <= settings['execution_thread_count']
+			return original_submit(executor, function, *args, **kwargs)
+
+		def write(writer, frame):
+			nonlocal written
+			original_write(writer, frame)
+			written += 1
+
+		mocker.patch.object(ThreadPoolExecutor, 'submit', new = submit)
+		mocker.patch.object(video_manager, 'write_video_frame', new = write)
 	with frame_checkpoint.session():
 		core.setup()
 		if strategy == 'memory':

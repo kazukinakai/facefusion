@@ -1,6 +1,7 @@
 import time
 from collections import deque
 from concurrent.futures import Future
+from itertools import islice
 from typing import Deque, Tuple
 
 import cv2
@@ -102,19 +103,21 @@ def process_memory_frames() -> ErrorCode:
 			with cli_progress.create() as progress:
 				conditional_get_reference_vision_frames()
 
-				with thread_helper.create_executor(state_manager.get_item('execution_thread_count')) as executor:
+				worker_count = state_manager.get_item('execution_thread_count')
+				with thread_helper.create_executor(worker_count) as executor:
 					futures : Deque[Future[VisionFrame]] = deque()
 					checkpoint_error = False
 
-					for frame_index in temp_frame_range:
-						future = executor.submit(process_memory_frame, frame_index, temp_video_resolution, output_video_resolution)
-						futures.append(future)
+					# A completed future owns a decoded frame until the writer consumes it.
+					remaining_frames = iter(temp_frame_range)
+					for frame_index in islice(remaining_frames, worker_count):
+						futures.append(executor.submit(process_memory_frame, frame_index, temp_video_resolution, output_video_resolution))
 
 					while futures:
 						future = futures.popleft()
 
 						if process_manager.is_stopping():
-
+							future.cancel()
 							for pending_future in futures:
 								pending_future.cancel()
 
@@ -133,6 +136,10 @@ def process_memory_frames() -> ErrorCode:
 								continue
 							process_manager.update()
 							progress.update()
+							del future
+							next_frame = next(remaining_frames, None)
+							if next_frame is not None and not process_manager.is_stopping():
+								futures.append(executor.submit(process_memory_frame, next_frame, temp_video_resolution, output_video_resolution))
 
 		if not video_manager.close_video_writer(video_writer):
 			process_manager.stop()
